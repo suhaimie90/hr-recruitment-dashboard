@@ -1,0 +1,30 @@
+# ── Secrets ─────────────────────────────────────────────
+# .env* covers .env, .env.local, .env.production …
+.env*
+!.env.example
+
+# ── Applicant data — NEVER commit ───────────────────────
+# Spreadsheet exports carry names, emails, IC numbers, phone
+# numbers and resume links. A commit cannot be undone.
+*.xlsx
+*.xls
+*.xlsm
+*.csv
+*.ods
+
+# ── Dependencies & build output ─────────────────────────
+node_modules/
+dist/
+build/
+coverage/
+.vercel/
+
+# ── Local tooling ───────────────────────────────────────
+.claude/
+*.log
+npm-debug.log*
+
+# ── OS noise ────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+desktop.ini

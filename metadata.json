@@ -1,0 +1,6 @@
+{
+  "name": "HR Recruitment Dashboard",
+  "description": "A modern HR recruitment and candidate tracking dashboard with pipeline management, applicant details, resume viewer, analytics, and status tracking.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
