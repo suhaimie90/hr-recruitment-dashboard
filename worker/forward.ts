@@ -1,19 +1,9 @@
 /**
- * Cloudflare Pages Function — proxy to the Google Apps Script web app.
+ * Proxy logic between the browser and the Google Apps Script web app.
  *
- * Serves GET/POST at /api/gas. The browser never sees GAS_TOKEN or
- * GAS_URL; this runs on Cloudflare's edge and injects them. Without
- * this hop the token would ship inside the JS bundle and anyone could
- * read the applicant sheet.
- *
- * Environment variables (Cloudflare Pages → Settings → Variables and
- * Secrets). Mark both as **Secret**, and do NOT use a VITE_ prefix —
- * that would inline them into the client bundle:
- *   GAS_URL    https://script.google.com/macros/s/AKfy.../exec
- *   GAS_TOKEN  same string as DASHBOARD_TOKEN in Config.gs
- *
- * `forward` is exported so vite.config.ts can serve an identical
- * /api/gas locally without duplicating the logic.
+ * Platform-agnostic: built on Web-standard fetch, so the same function
+ * runs on the Cloudflare Worker and in the Vite dev middleware. Keeping
+ * one implementation is what stops local and production from drifting.
  */
 
 export interface Env {
@@ -45,7 +35,7 @@ export async function forward(
         result: 'error',
         message:
           'GAS_URL and GAS_TOKEN are not set. Add them to .env.local for local dev, ' +
-          'or to the Cloudflare Pages project environment for deployments.'
+          'or as Secrets on the Worker for deployments.'
       }
     };
   }
@@ -123,35 +113,4 @@ async function parseUpstream(upstream: { text(): Promise<string> }) {
       raw: text.slice(0, 300)
     };
   }
-}
-
-/**
- * Cloudflare Pages entry point. Runs on the Workers runtime, so config
- * arrives via `context.env` rather than process.env, and the handler
- * returns a standard Response.
- */
-export async function onRequest(context: {
-  request: Request;
-  env: Env;
-}): Promise<Response> {
-  const { request, env } = context;
-  const url = new URL(request.url);
-  const query = Object.fromEntries(url.searchParams.entries());
-
-  let body: Record<string, unknown> | null = null;
-
-  if (request.method === 'POST') {
-    try {
-      body = await request.json();
-    } catch {
-      body = {};
-    }
-  }
-
-  const { status, body: payload } = await forward(request.method, query, body, env);
-
-  return new Response(JSON.stringify(payload), {
-    status,
-    headers: { 'Content-Type': 'application/json' }
-  });
 }
