@@ -1,24 +1,25 @@
-import type { VercelRequest, VercelResponse } from '@vercel/node';
-
 /**
- * Server-side proxy to the Google Apps Script web app.
+ * Cloudflare Pages Function — proxy to the Google Apps Script web app.
  *
- * The browser never sees GAS_TOKEN or GAS_URL — it calls /api/gas and
- * this function injects them. Without this hop the token would ship
- * inside the JS bundle and anyone could read the applicant sheet.
+ * Serves GET/POST at /api/gas. The browser never sees GAS_TOKEN or
+ * GAS_URL; this runs on Cloudflare's edge and injects them. Without
+ * this hop the token would ship inside the JS bundle and anyone could
+ * read the applicant sheet.
  *
- * Required Vercel environment variables (no VITE_ prefix — that would
- * expose them to the client):
+ * Environment variables (Cloudflare Pages → Settings → Variables and
+ * Secrets). Mark both as **Secret**, and do NOT use a VITE_ prefix —
+ * that would inline them into the client bundle:
  *   GAS_URL    https://script.google.com/macros/s/AKfy.../exec
  *   GAS_TOKEN  same string as DASHBOARD_TOKEN in Config.gs
  *
- * NOTE: this file deliberately has NO relative imports. package.json
- * sets "type": "module", so Node's ESM resolver on Vercel rejects an
- * extensionless import like `./_forward` and the whole function fails
- * to load — every route returning FUNCTION_INVOCATION_FAILED. Vite
- * bundles the config locally and hides the problem, so keep `forward`
- * here and let vite.config.ts import it from this file.
+ * `forward` is exported so vite.config.ts can serve an identical
+ * /api/gas locally without duplicating the logic.
  */
+
+export interface Env {
+  GAS_URL?: string;
+  GAS_TOKEN?: string;
+}
 
 const READ_ACTIONS = ['bootstrap', 'applications', 'activity', 'interviews'];
 
@@ -33,7 +34,7 @@ export async function forward(
   method: string,
   query: Record<string, string | string[] | undefined>,
   body: Record<string, unknown> | null,
-  env: { GAS_URL?: string; GAS_TOKEN?: string }
+  env: Env
 ): Promise<ForwardResult> {
   const { GAS_URL, GAS_TOKEN } = env;
 
@@ -44,7 +45,7 @@ export async function forward(
         result: 'error',
         message:
           'GAS_URL and GAS_TOKEN are not set. Add them to .env.local for local dev, ' +
-          'or to the Vercel project environment for deployments.'
+          'or to the Cloudflare Pages project environment for deployments.'
       }
     };
   }
@@ -108,7 +109,7 @@ export async function forward(
  * misconfigured or the script throws before ContentService runs.
  * A raw JSON parse error would be useless, so translate it.
  */
-async function parseUpstream(upstream: Response) {
+async function parseUpstream(upstream: { text(): Promise<string> }) {
   const text = await upstream.text();
 
   try {
@@ -124,22 +125,33 @@ async function parseUpstream(upstream: Response) {
   }
 }
 
-export default async function handler(req: VercelRequest, res: VercelResponse) {
-  const body =
-    typeof req.body === 'string' ? safeParse(req.body) : (req.body as Record<string, unknown>) || null;
+/**
+ * Cloudflare Pages entry point. Runs on the Workers runtime, so config
+ * arrives via `context.env` rather than process.env, and the handler
+ * returns a standard Response.
+ */
+export async function onRequest(context: {
+  request: Request;
+  env: Env;
+}): Promise<Response> {
+  const { request, env } = context;
+  const url = new URL(request.url);
+  const query = Object.fromEntries(url.searchParams.entries());
 
-  const { status, body: payload } = await forward(req.method || 'GET', req.query, body, {
-    GAS_URL: process.env.GAS_URL,
-    GAS_TOKEN: process.env.GAS_TOKEN
-  });
+  let body: Record<string, unknown> | null = null;
 
-  res.status(status).json(payload);
-}
-
-function safeParse(text: string): Record<string, unknown> {
-  try {
-    return JSON.parse(text || '{}');
-  } catch {
-    return {};
+  if (request.method === 'POST') {
+    try {
+      body = await request.json();
+    } catch {
+      body = {};
+    }
   }
+
+  const { status, body: payload } = await forward(request.method, query, body, env);
+
+  return new Response(JSON.stringify(payload), {
+    status,
+    headers: { 'Content-Type': 'application/json' }
+  });
 }
