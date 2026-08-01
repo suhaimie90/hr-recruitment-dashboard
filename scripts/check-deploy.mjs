@@ -77,6 +77,15 @@ async function run(baseUrl, userEmail) {
   // 3. Translate the failure into the actual fix.
   const msg = String(json.message || '');
   console.log(`  [ FAIL ] ${msg}`);
+
+  // parseUpstream attaches what Apps Script actually returned. This is
+  // usually the whole diagnosis — a Google 404 page, a sign-in page, etc.
+  if (json.raw) {
+    console.log('');
+    console.log('  RAW RESPONSE FROM APPS SCRIPT:');
+    console.log(`  ${String(json.raw).replace(/\s+/g, ' ').slice(0, 280)}`);
+  }
+
   console.log('');
 
   if (/are not set/i.test(msg)) {
@@ -89,8 +98,12 @@ async function run(baseUrl, userEmail) {
     console.log('  FIX:   Re-copy the value from .env.local WITHOUT the surrounding');
     console.log('         quotes, check for a trailing space, then redeploy.');
   } else if (/non-JSON|Execute as/i.test(msg)) {
-    console.log('  CAUSE: GAS_URL is wrong, or the deployment is misconfigured.');
-    console.log('  FIX:   Value must end in /exec and carry no quotes.');
+    console.log('  CAUSE: Apps Script answered with HTML instead of JSON. Read the raw');
+    console.log('         response above — it names which of these it is:');
+    console.log('           "Page Not Found"      -> GAS_URL wrong or deployment deleted');
+    console.log('           "Sign in" / accounts  -> access is not set to "Anyone"');
+    console.log('           "Moved Temporarily"   -> redirect was not followed');
+    console.log('           "Script function..."  -> the script threw before responding');
   } else if (/not registered|inactive/i.test(msg)) {
     console.log(`  CAUSE: "${userEmail}" is not an active row in the Users sheet.`);
     console.log('  FIX:   Check spelling and that Active is 1/TRUE/Yes.');
