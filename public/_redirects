@@ -1,0 +1,5 @@
+# Cloudflare Pages SPA fallback.
+# Pages Functions (/api/*) are matched before this rule, so the proxy
+# still runs. Everything else serves index.html so deep links and
+# client-side routing work instead of 404ing.
+/*    /index.html   200

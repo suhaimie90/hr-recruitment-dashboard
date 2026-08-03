@@ -2,11 +2,9 @@ import tailwindcss from '@tailwindcss/vite';
 import react from '@vitejs/plugin-react';
 import path from 'path';
 import { defineConfig, loadEnv, type Plugin } from 'vite';
-// Same implementation the deployed serverless function uses, so local
-// dev and production can't drift. Vite bundles this config, so the
-// extensionless import is fine here — it is NOT safe inside api/gas.ts
-// itself, where Node's ESM resolver rejects it. See the note there.
-import { forward } from './api/gas';
+// Same implementation the deployed Pages Function uses, so local dev
+// and production can't drift.
+import { forward } from './functions/api/gas';
 
 /**
  * Vercel serverless functions don't run under `vite dev`, so this
