@@ -37,7 +37,7 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onLogin, error }) => {
           <form onSubmit={handleSubmit} className="p-7 space-y-4">
             <div>
               <label htmlFor="email" className="block text-xs font-semibold text-slate-700 mb-1.5">
-                Work Email
+                Email
               </label>
               <input
                 id="email"
@@ -46,11 +46,10 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onLogin, error }) => {
                 autoFocus
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
-                placeholder="you@company.com"
                 className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all"
               />
               <p className="text-[11px] text-slate-400 mt-1.5">
-                Must match an active row in the Users sheet.
+                Contact MIS team for first time login.
               </p>
             </div>
 
@@ -81,11 +80,6 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onLogin, error }) => {
           </form>
         </div>
 
-        <p className="text-center text-[11px] text-slate-400 mt-4 leading-relaxed">
-          Access is checked against the Users sheet.
-          <br />
-          Contact your HR administrator to be added.
-        </p>
       </div>
     </div>
   );

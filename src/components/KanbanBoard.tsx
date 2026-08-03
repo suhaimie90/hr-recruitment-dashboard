@@ -1,7 +1,7 @@
 import React from 'react';
 import { Star, Clock, MapPin, FileText, Briefcase } from 'lucide-react';
 import { Application, ApplicationStage } from '../types';
-import { initials, stageStyle } from '../lib/derive';
+import { initials, stageStyle, buildBoardColumns, canMoveToStage, isDecidedStage } from '../lib/derive';
 
 interface KanbanBoardProps {
   applications: Application[];
@@ -20,20 +20,23 @@ export const KanbanBoard: React.FC<KanbanBoardProps> = ({
   onSelectResume,
   onUpdateStage
 }) => {
+  const columns = buildBoardColumns(stages);
+
   return (
     <div className="flex gap-4 overflow-x-auto pb-6 pt-2 items-start min-h-[calc(100vh-220px)]">
-      {stages.map((stage) => {
-        const stageApps = applications.filter((app) => app.stage === stage);
+      {columns.map((column) => {
+        const stageApps = applications.filter((app) => column.stages.includes(app.stage));
+        const isMerged = column.stages.length > 1;
 
         return (
           <div
-            key={stage}
+            key={column.key}
             className="w-72 sm:w-80 shrink-0 bg-slate-100/80 rounded-xl border border-slate-200 p-3 flex flex-col max-h-[calc(100vh-210px)]"
           >
             <div className="flex items-center justify-between pb-3 px-1 border-b border-slate-200/80 mb-3">
               <div className="flex items-center gap-2">
-                <span className={`w-2.5 h-2.5 rounded-full border-2 ${stageStyle(stage)}`} />
-                <h3 className="font-bold text-sm tracking-tight text-slate-700">{stage}</h3>
+                <span className={`w-2.5 h-2.5 rounded-full border-2 ${stageStyle(column.stages[0])}`} />
+                <h3 className="font-bold text-sm tracking-tight text-slate-700">{column.title}</h3>
               </div>
               <span className="text-xs font-semibold px-2 py-0.5 rounded-full bg-white border border-slate-200 text-slate-600 shadow-2xs">
                 {stageApps.length}
@@ -43,7 +46,7 @@ export const KanbanBoard: React.FC<KanbanBoardProps> = ({
             <div className="flex-1 overflow-y-auto space-y-3 pr-1">
               {stageApps.length === 0 ? (
                 <div className="py-8 text-center text-xs text-slate-400 border border-dashed border-slate-200 rounded-lg">
-                  No applicants in {stage}
+                  No applicants in {column.title}
                 </div>
               ) : (
                 stageApps.map((app) => (
@@ -64,6 +67,18 @@ export const KanbanBoard: React.FC<KanbanBoardProps> = ({
                           {app.applicationId}
                         </p>
                       </div>
+
+                      {/* In the merged column the stage IS the outcome, so
+                          show it — otherwise the column header says it. */}
+                      {isMerged && (
+                        <span
+                          className={`text-[10px] font-bold px-1.5 py-0.5 rounded border shrink-0 ${stageStyle(
+                            app.stage
+                          )}`}
+                        >
+                          {app.stage}
+                        </span>
+                      )}
                     </div>
 
                     <div className="space-y-1 mb-3 text-xs text-slate-600">
@@ -124,13 +139,23 @@ export const KanbanBoard: React.FC<KanbanBoardProps> = ({
 
                         <select
                           value={app.stage}
-                          disabled={!canEdit}
+                          disabled={!canEdit || isDecidedStage(app.stage)}
                           onChange={(e) => onUpdateStage(app.applicationId, e.target.value)}
                           className="text-[10px] font-bold bg-slate-100 hover:bg-indigo-50 hover:text-indigo-700 text-slate-700 px-1.5 py-0.5 rounded border border-slate-200 outline-none cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
-                          title={canEdit ? 'Move to another stage' : 'Read-only access'}
+                          title={
+                            !canEdit
+                              ? 'Read-only access'
+                              : isDecidedStage(app.stage)
+                                ? `${app.stage} is final — correct it in the spreadsheet`
+                                : 'Move forward to another stage'
+                          }
                         >
                           {stages.map((s) => (
-                            <option key={s} value={s}>
+                            <option
+                              key={s}
+                              value={s}
+                              disabled={s !== app.stage && !canMoveToStage(stages, app.stage, s)}
+                            >
                               {s}
                             </option>
                           ))}

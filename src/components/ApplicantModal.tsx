@@ -16,11 +16,32 @@ import {
   CreditCard,
   Home,
   Banknote,
-  Plane
+  Plane,
+  Printer,
+  UserCheck,
+  UserX
 } from 'lucide-react';
-import { Application, ApplicationStage, AppUser, AuditEntry, Interview, Settings } from '../types';
-import { fetchActivity, scheduleInterview } from '../services/api';
-import { initials, stageStyle } from '../lib/derive';
+import {
+  Application,
+  ApplicationStage,
+  AppUser,
+  AssessmentCriterion,
+  AuditEntry,
+  Interview,
+  Scorecard,
+  Settings
+} from '../types';
+import { fetchActivity, fetchAssessments, saveAssessment, scheduleInterview } from '../services/api';
+import { AssessmentPanel } from './AssessmentPanel';
+import {
+  initials,
+  stageStyle,
+  isTerminalStage,
+  isHiredStage,
+  isRejectedStage,
+  isDecidedStage,
+  canMoveToStage
+} from '../lib/derive';
 
 interface ApplicantModalProps {
   application: Application | null;
@@ -55,6 +76,7 @@ export const ApplicantModal: React.FC<ApplicantModalProps> = ({
   const [activeTab, setActiveTab] = useState<Tab>('profile');
   const [auditLog, setAuditLog] = useState<AuditEntry[]>([]);
   const [interviews, setInterviews] = useState<Interview[]>([]);
+  const [scorecards, setScorecards] = useState<Scorecard[]>([]);
   const [isLoadingActivity, setIsLoadingActivity] = useState(false);
 
   const [noteContent, setNoteContent] = useState('');
@@ -68,6 +90,9 @@ export const ApplicantModal: React.FC<ApplicantModalProps> = ({
   const [interviewType, setInterviewType] = useState('');
   const [interviewLink, setInterviewLink] = useState('');
 
+  const [rejectReason, setRejectReason] = useState('');
+  const [showRejectForm, setShowRejectForm] = useState(false);
+
   const applicationId = application?.applicationId;
 
   // Activity is fetched lazily per candidate rather than bundled into
@@ -77,12 +102,19 @@ export const ApplicantModal: React.FC<ApplicantModalProps> = ({
 
     setIsLoadingActivity(true);
     try {
-      const bundle = await fetchActivity(applicationId);
+      // Assessments live in their own sheet, which may not exist yet —
+      // fail soft so the rest of the drawer still loads.
+      const [bundle, cards] = await Promise.all([
+        fetchActivity(applicationId),
+        fetchAssessments(applicationId).catch(() => [] as Scorecard[])
+      ]);
       setAuditLog(bundle.auditLog);
       setInterviews(bundle.interviews);
+      setScorecards(cards);
     } catch {
       setAuditLog([]);
       setInterviews([]);
+      setScorecards([]);
     } finally {
       setIsLoadingActivity(false);
     }
@@ -94,6 +126,8 @@ export const ApplicantModal: React.FC<ApplicantModalProps> = ({
     setNoteContent('');
     setNoteRating(0);
     setShowInterviewForm(false);
+    setShowRejectForm(false);
+    setRejectReason('');
     loadActivity();
   }, [applicationId, loadActivity]);
 
@@ -102,6 +136,49 @@ export const ApplicantModal: React.FC<ApplicantModalProps> = ({
   const notes = auditLog.filter((entry) => entry.action === 'NOTE');
   const noteTags = settings['NoteTag'] || [];
   const interviewTypes = settings['InterviewType'] || ['Screening', 'Technical', 'Final'];
+  const rejectionReasons = settings['RejectionReason'] || [
+    'Did not show up',
+    'Declined offer',
+    'Failed assessment',
+    'Position filled',
+    'Not a fit'
+  ];
+
+  // Offer / Hired / Rejected all live in one board column, so the
+  // outcome is recorded here instead of by dragging between stages.
+  const hiredStage = stages.find(isHiredStage);
+  const rejectedStage = stages.find(isRejectedStage);
+  const inOutcome = isTerminalStage(application.stage);
+  const isDecided = isHiredStage(application.stage) || isRejectedStage(application.stage);
+
+  // Stage-aware panels: the drawer should show the work due *now*,
+  // not the same three read-only tabs at every stage.
+  const assessmentCriteria = settings['AssessmentCriteria'] || [
+    'Role-specific Skills',
+    'Behavioural Skills',
+    'Communication',
+    'Attitude & Motivation'
+  ];
+
+  const atInterview = /interview/i.test(application.stage);
+  const atAssessment = /assessment/i.test(application.stage);
+
+  const handleSaveAssessment = async (criteria: AssessmentCriterion[]) => {
+    await saveAssessment(application.applicationId, criteria);
+    await loadActivity();
+  };
+
+  const recordOutcome = async (stage: string, remarks?: string) => {
+    setIsSubmitting(true);
+    try {
+      await onUpdateStage(application.applicationId, stage, remarks);
+      setShowRejectForm(false);
+      setRejectReason('');
+      await loadActivity();
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
 
   const handleNoteSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -204,23 +281,48 @@ export const ApplicantModal: React.FC<ApplicantModalProps> = ({
           </div>
         </div>
 
-        {/* Stage bar */}
+        {/* Stage bar — working stages only. Hired/Rejected are set in
+            the Outcome panel below, not by clicking through stages. */}
         <div className="px-6 py-3 bg-slate-50 border-b border-slate-200 flex items-center gap-2 flex-wrap">
           <span className="text-xs font-semibold text-slate-500">Stage:</span>
-          {stages.map((stage) => (
-            <button
-              key={stage}
-              disabled={!canEdit || stage === application.stage}
-              onClick={() => onUpdateStage(application.applicationId, stage)}
-              className={`text-[11px] font-bold px-2.5 py-1 rounded-lg border transition-all cursor-pointer disabled:cursor-not-allowed ${
-                stage === application.stage
-                  ? `${stageStyle(stage)} ring-2 ring-offset-1 ring-slate-300`
-                  : 'bg-white text-slate-500 border-slate-200 hover:border-indigo-300 hover:text-indigo-600 disabled:opacity-40'
-              }`}
+          {stages
+            .filter((stage) => !isHiredStage(stage) && !isRejectedStage(stage))
+            .map((stage) => {
+              const isCurrent = stage === application.stage;
+              const allowed = canMoveToStage(stages, application.stage, stage);
+
+              return (
+                <button
+                  key={stage}
+                  disabled={!canEdit || isCurrent || !allowed}
+                  onClick={() => onUpdateStage(application.applicationId, stage)}
+                  title={
+                    isCurrent
+                      ? 'Current stage'
+                      : allowed
+                        ? `Move forward to ${stage}`
+                        : 'Stages only move forward'
+                  }
+                  className={`text-[11px] font-bold px-2.5 py-1 rounded-lg border transition-all cursor-pointer disabled:cursor-not-allowed ${
+                    isCurrent
+                      ? `${stageStyle(stage)} ring-2 ring-offset-1 ring-slate-300`
+                      : 'bg-white text-slate-500 border-slate-200 hover:border-indigo-300 hover:text-indigo-600 disabled:opacity-40'
+                  }`}
+                >
+                  {stage}
+                </button>
+              );
+            })}
+
+          {isDecided && (
+            <span
+              className={`text-[11px] font-bold px-2.5 py-1 rounded-lg border ring-2 ring-offset-1 ring-slate-300 ${stageStyle(
+                application.stage
+              )}`}
             >
-              {stage}
-            </button>
-          ))}
+              {application.stage}
+            </span>
+          )}
         </div>
 
         {/* Tabs */}
@@ -249,6 +351,181 @@ export const ApplicantModal: React.FC<ApplicantModalProps> = ({
         <div className="flex-1 overflow-y-auto p-6 bg-slate-50/50">
           {activeTab === 'profile' && (
             <div className="space-y-5">
+              {/* Outcome — only once the candidate reaches the offer step.
+                  Offer is made by phone or email outside this system, so
+                  all that's recorded here is what happened next. */}
+              {inOutcome && (
+                <div className="bg-white p-4 rounded-xl border border-slate-200">
+                  <div className="flex items-center justify-between mb-3">
+                    <h4 className="text-xs font-bold text-slate-500 uppercase tracking-wide">
+                      Outcome
+                    </h4>
+                    <button
+                      onClick={() => window.print()}
+                      className="text-xs font-semibold text-slate-500 hover:text-indigo-600 flex items-center gap-1 cursor-pointer"
+                      title="Print this candidate's details"
+                    >
+                      <Printer className="w-3.5 h-3.5" />
+                      Print
+                    </button>
+                  </div>
+
+                  {isDecided ? (
+                    <div className="space-y-1">
+                      <p className="text-sm text-slate-700">
+                        Recorded as <span className="font-bold">{application.stage}</span>.
+                      </p>
+                      <p className="text-[11px] text-slate-400">
+                        This is final. To change it, edit the Stage column in the
+                        spreadsheet.
+                      </p>
+                    </div>
+                  ) : !canEdit ? (
+                    <p className="text-xs text-slate-500">
+                      Offer extended — awaiting outcome. Your role is read-only.
+                    </p>
+                  ) : showRejectForm ? (
+                    <div className="space-y-2.5">
+                      <label className="text-xs font-semibold text-slate-600">
+                        Reason for rejection
+                      </label>
+                      <select
+                        value={rejectReason}
+                        onChange={(e) => setRejectReason(e.target.value)}
+                        className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-xs outline-none cursor-pointer"
+                      >
+                        <option value="">Select a reason…</option>
+                        {rejectionReasons.map((reason) => (
+                          <option key={reason} value={reason}>
+                            {reason}
+                          </option>
+                        ))}
+                      </select>
+                      <div className="flex gap-2">
+                        <button
+                          onClick={() => {
+                            if (!window.confirm(`Reject ${application.fullName} — "${rejectReason}"? This cannot be undone in the dashboard.`)) return;
+                            if (rejectedStage) recordOutcome(rejectedStage, rejectReason);
+                          }}
+                          disabled={isSubmitting || !rejectReason}
+                          className="flex-1 bg-rose-600 hover:bg-rose-500 disabled:opacity-50 text-white text-xs font-semibold py-2 rounded-lg cursor-pointer"
+                        >
+                          {isSubmitting ? 'Saving…' : 'Confirm Rejection'}
+                        </button>
+                        <button
+                          onClick={() => setShowRejectForm(false)}
+                          className="px-4 text-xs font-semibold text-slate-500 hover:text-slate-800 cursor-pointer"
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <>
+                      <p className="text-xs text-slate-500 mb-3">
+                        Offer extended. Did the candidate show up?{' '}
+                        <span className="text-slate-400">This cannot be undone here.</span>
+                      </p>
+                      <div className="flex gap-2">
+                        <button
+                          onClick={() => {
+                            // Irreversible once set — worth one confirmation
+                            // given the whole flow is single clicks.
+                            if (!window.confirm(`Mark ${application.fullName} as hired? This cannot be undone in the dashboard.`)) return;
+                            if (hiredStage) recordOutcome(hiredStage, 'Showed up — hired');
+                          }}
+                          disabled={isSubmitting || !hiredStage}
+                          className="flex-1 flex items-center justify-center gap-1.5 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white text-xs font-semibold py-2.5 rounded-lg cursor-pointer"
+                        >
+                          <UserCheck className="w-3.5 h-3.5" />
+                          Showed up — Hire
+                        </button>
+                        <button
+                          onClick={() => setShowRejectForm(true)}
+                          disabled={isSubmitting || !rejectedStage}
+                          className="flex-1 flex items-center justify-center gap-1.5 bg-white hover:bg-rose-50 border border-rose-200 text-rose-700 disabled:opacity-50 text-xs font-semibold py-2.5 rounded-lg cursor-pointer"
+                        >
+                          <UserX className="w-3.5 h-3.5" />
+                          No show — Reject
+                        </button>
+                      </div>
+                    </>
+                  )}
+                </div>
+              )}
+
+              {/* Interview stage — surface the booking here rather than
+                  burying it in a tab the recruiter has to go looking for. */}
+              {atInterview && (
+                <div className="bg-white p-4 rounded-xl border border-slate-200">
+                  <div className="flex items-center justify-between mb-3">
+                    <h4 className="text-xs font-bold text-slate-500 uppercase tracking-wide flex items-center gap-1.5">
+                      <Calendar className="w-3.5 h-3.5" />
+                      Interview
+                    </h4>
+                    {canEdit && (
+                      <button
+                        onClick={() => {
+                          setActiveTab('timeline');
+                          setShowInterviewForm(true);
+                        }}
+                        className="text-xs font-semibold text-indigo-600 hover:underline flex items-center gap-1 cursor-pointer"
+                      >
+                        <CalendarPlus className="w-3.5 h-3.5" />
+                        Schedule
+                      </button>
+                    )}
+                  </div>
+
+                  {isLoadingActivity ? (
+                    <Loading />
+                  ) : interviews.length === 0 ? (
+                    <p className="text-xs text-slate-400 py-1">
+                      No interview scheduled yet for this candidate.
+                    </p>
+                  ) : (
+                    <div className="space-y-2">
+                      {interviews.map((interview, i) => (
+                        <div
+                          key={i}
+                          className="flex items-center justify-between gap-3 p-3 bg-slate-50 rounded-lg border border-slate-100"
+                        >
+                          <div className="overflow-hidden">
+                            <p className="text-xs font-bold text-slate-800 truncate">
+                              {interview.title}
+                            </p>
+                            <p className="text-[11px] text-slate-500 truncate">
+                              {interview.interviewer} · {interview.scheduledAt}
+                            </p>
+                          </div>
+                          {interview.meetingLink && (
+                            <a
+                              href={interview.meetingLink}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="text-[11px] font-semibold bg-indigo-600 hover:bg-indigo-500 text-white px-2.5 py-1.5 rounded-lg shrink-0"
+                            >
+                              Join
+                            </a>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Assessment stage — the scorecard is the work here. */}
+              {atAssessment && (
+                <AssessmentPanel
+                  criteria={assessmentCriteria}
+                  scorecards={scorecards}
+                  canEdit={canEdit}
+                  isLoading={isLoadingActivity}
+                  onSubmit={handleSaveAssessment}
+                />
+              )}
+
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <Field icon={CreditCard} label="IC / Passport" value={application.icNumber} />
                 <Field icon={Briefcase} label="Position Applied" value={application.position} />

@@ -66,6 +66,8 @@ export default function App() {
     stage: 'ALL',
     state: 'ALL',
     minRating: 0,
+    dateFrom: '',
+    dateTo: '',
     sortBy: 'timestamp',
     sortOrder: 'desc'
   });
@@ -81,7 +83,10 @@ export default function App() {
       ? settings['Status']
       : DEFAULT_STAGES;
 
-  const canEdit = (user?.role ?? '').toLowerCase() !== 'viewer';
+  // Prefer what the server resolved. Fall back to the role name only
+  // when an older Apps Script deployment doesn't send these fields.
+  const canEdit = user?.canEdit ?? (user?.role ?? '').toLowerCase() !== 'viewer';
+  const canViewStats = user?.canViewStats !== false;
 
   // ── Session restore ─────────────────────────────────────
   useEffect(() => {
@@ -160,9 +165,12 @@ export default function App() {
     [applications, filters]
   );
 
+  // Computed from the FILTERED list so the metric cards and charts track
+  // whatever branch/position/date filter is applied. Using the full list
+  // made "Total Applications" read 412 even when one branch was selected.
   const analytics = useMemo(
-    () => computeAnalytics(applications, stages),
-    [applications, stages]
+    () => computeAnalytics(visibleApplications, stages),
+    [visibleApplications, stages]
   );
 
   // ── Write handlers ──────────────────────────────────────
@@ -188,6 +196,23 @@ export default function App() {
     } catch (err) {
       setApplications(previous); // roll back the optimistic update
       alert(`Could not update stage: ${err instanceof Error ? err.message : err}`);
+    }
+  };
+
+  /**
+   * Opening an applicant IS the screening step — reading the profile
+   * takes under a minute, so making the recruiter also set the stage is
+   * busywork. Only fires on the very first stage, and never for Viewers,
+   * so it can't skip a candidate past a real review step.
+   */
+  const handleSelectApplication = (app: Application) => {
+    setSelectedApplication(app);
+
+    const firstStage = stages[0];
+    const screeningStage = stages[1];
+
+    if (canEdit && screeningStage && app.stage === firstStage) {
+      handleUpdateStage(app.applicationId, screeningStage, 'Auto-advanced on first open');
     }
   };
 
@@ -237,6 +262,7 @@ export default function App() {
         activeTab={activeTab}
         setActiveTab={setActiveTab}
         user={user}
+        canViewStats={canViewStats}
         onLogout={handleLogout}
         totalApplicants={applications.length}
         interviewCount={interviews.length}
@@ -323,7 +349,7 @@ export default function App() {
                   applications={visibleApplications}
                   stages={stages}
                   canEdit={canEdit}
-                  onSelectApplication={setSelectedApplication}
+                  onSelectApplication={handleSelectApplication}
                   onSelectResume={setSelectedResumeApp}
                   onUpdateStage={handleUpdateStage}
                 />
@@ -332,7 +358,7 @@ export default function App() {
                   applications={visibleApplications}
                   stages={stages}
                   canEdit={canEdit}
-                  onSelectApplication={setSelectedApplication}
+                  onSelectApplication={handleSelectApplication}
                   onSelectResume={setSelectedResumeApp}
                   onUpdateStage={handleUpdateStage}
                 />
@@ -340,7 +366,7 @@ export default function App() {
             </div>
           )}
 
-          {activeTab === 'analytics' && (
+          {activeTab === 'analytics' && canViewStats && (
             <Suspense
               fallback={
                 <div className="flex justify-center py-20">
@@ -348,7 +374,7 @@ export default function App() {
                 </div>
               }
             >
-              <AnalyticsView analytics={analytics} />
+              <AnalyticsView analytics={analytics} applications={visibleApplications} />
             </Suspense>
           )}
 

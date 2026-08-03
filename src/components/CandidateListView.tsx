@@ -1,7 +1,7 @@
 import React from 'react';
 import { Star, FileText, ChevronRight } from 'lucide-react';
 import { Application, ApplicationStage } from '../types';
-import { initials, stageStyle } from '../lib/derive';
+import { initials, stageStyle, canMoveToStage, isDecidedStage } from '../lib/derive';
 
 interface CandidateListViewProps {
   applications: Application[];
@@ -71,14 +71,23 @@ export const CandidateListView: React.FC<CandidateListViewProps> = ({
                   <td className="py-3 px-4" onClick={(e) => e.stopPropagation()}>
                     <select
                       value={app.stage}
-                      disabled={!canEdit}
+                      disabled={!canEdit || isDecidedStage(app.stage)}
                       onChange={(e) => onUpdateStage(app.applicationId, e.target.value)}
+                      title={
+                        isDecidedStage(app.stage)
+                          ? `${app.stage} is final — correct it in the spreadsheet`
+                          : undefined
+                      }
                       className={`text-[11px] font-bold px-2 py-1 rounded-lg border outline-none cursor-pointer disabled:cursor-not-allowed ${stageStyle(
                         app.stage
                       )}`}
                     >
                       {stages.map((stage) => (
-                        <option key={stage} value={stage}>
+                        <option
+                          key={stage}
+                          value={stage}
+                          disabled={stage !== app.stage && !canMoveToStage(stages, app.stage, stage)}
+                        >
                           {stage}
                         </option>
                       ))}

@@ -20,9 +20,16 @@ import type { VercelRequest, VercelResponse } from '@vercel/node';
  * here and let vite.config.ts import it from this file.
  */
 
-const READ_ACTIONS = ['bootstrap', 'applications', 'activity', 'interviews'];
+const READ_ACTIONS = ['bootstrap', 'applications', 'activity', 'interviews', 'assessments'];
 
-const WRITE_ACTIONS = ['login', 'updateStage', 'addNote', 'updateTags', 'scheduleInterview'];
+const WRITE_ACTIONS = [
+  'login',
+  'updateStage',
+  'addNote',
+  'updateTags',
+  'scheduleInterview',
+  'saveAssessment'
+];
 
 export interface ForwardResult {
   status: number;
@@ -66,8 +73,10 @@ export async function forward(
         params.set(key, Array.isArray(value) ? value[0] : String(value));
       }
 
-      const upstream = await fetch(`${GAS_URL}?${params.toString()}`, { redirect: 'follow' });
-      return { status: 200, body: await parseUpstream(upstream) };
+      // Apps Script intermittently answers the googleusercontent
+      // redirect with a 404 HTML page instead of JSON. Reads are
+      // idempotent, so retry rather than surfacing a spurious error.
+      return { status: 200, body: await fetchJsonWithRetry(`${GAS_URL}?${params.toString()}`) };
     }
 
     if (method === 'POST') {
@@ -101,6 +110,40 @@ export async function forward(
       }
     };
   }
+}
+
+/**
+ * GET with retry.
+ *
+ * Apps Script routes /exec through a one-time redirect to
+ * script.googleusercontent.com, and that hop intermittently returns a
+ * Google 404 page instead of the script's JSON — roughly one request in
+ * a few dozen, unrelated to the deployment being healthy. Reads are
+ * idempotent so a retry is safe and invisible to the user.
+ *
+ * Deliberately NOT used for POST: a write that appears to fail may
+ * already have hit the sheet, and retrying would duplicate the row.
+ */
+async function fetchJsonWithRetry(url: string, attempts = 3) {
+  let last: unknown = null;
+
+  for (let i = 0; i < attempts; i++) {
+    const upstream = await fetch(url, { redirect: 'follow' });
+    const parsed = await parseUpstream(upstream);
+
+    // A real script response always carries `result`. The synthetic
+    // error object from parseUpstream carries `raw`.
+    if (!(parsed && typeof parsed === 'object' && 'raw' in parsed)) {
+      return parsed;
+    }
+
+    last = parsed;
+    if (i < attempts - 1) {
+      await new Promise((r) => setTimeout(r, 400 * (i + 1)));
+    }
+  }
+
+  return last;
 }
 
 /**

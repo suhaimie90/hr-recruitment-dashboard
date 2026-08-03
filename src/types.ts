@@ -61,11 +61,20 @@ export interface Interview {
   meetingLink: string;
 }
 
-/** A row of the Users sheet. Role gates every write. */
+/**
+ * A row of the Users sheet, plus the permissions Apps Script resolved
+ * from it. These flags are advisory for the UI only — the server
+ * enforces the same rules independently, so hiding a control here is
+ * convenience, not security.
+ */
 export interface AppUser {
   email: string;
   name: string;
   role: string;
+  /** Branches this user may see. Empty or absent = every branch. */
+  locations?: string[];
+  canEdit?: boolean;
+  canViewStats?: boolean;
 }
 
 /** Settings sheet grouped by Category, ordered by Sort, inactive dropped. */
@@ -74,6 +83,22 @@ export type Settings = Record<string, string[]>;
 export interface ActivityBundle {
   auditLog: AuditEntry[];
   interviews: Interview[];
+}
+
+/** One criterion within a scorecard. */
+export interface AssessmentCriterion {
+  criterion: string;
+  /** 1–5, or 0 when not scored. */
+  score: number;
+  comment: string;
+}
+
+/** One interviewer's assessment of one candidate, at one point in time. */
+export interface Scorecard {
+  assessor: string;
+  assessedAt: string;
+  average: number;
+  criteria: AssessmentCriterion[];
 }
 
 /** Computed in the browser from the applications array. */
@@ -96,6 +121,9 @@ export interface FilterState {
   stage: string;
   state: string;
   minRating: number;
+  /** Applied-date range, inclusive. Empty string means unbounded. */
+  dateFrom: string;
+  dateTo: string;
   sortBy: 'timestamp' | 'fullName' | 'rating' | 'expectedSalary' | 'experience';
   sortOrder: 'asc' | 'desc';
 }

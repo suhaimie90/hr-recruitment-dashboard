@@ -11,28 +11,24 @@ export const AnalyticsCards: React.FC<AnalyticsCardsProps> = ({ analytics }) => 
     {
       title: 'Total Applications',
       value: analytics.totalApplicants,
-      hint: 'All rows in the sheet',
       icon: Users,
       iconBg: 'bg-blue-50 text-blue-600'
     },
     {
       title: 'In Progress',
       value: analytics.activeStages,
-      hint: 'Excludes hired and rejected',
       icon: Activity,
       iconBg: 'bg-indigo-50 text-indigo-600'
     },
     {
       title: 'Hired',
       value: analytics.hiredCount,
-      hint: 'Reached the final stage',
       icon: CheckCircle2,
       iconBg: 'bg-emerald-50 text-emerald-600'
     },
     {
       title: 'Average Rating',
       value: analytics.avgRating ? `${analytics.avgRating}/5` : '—',
-      hint: 'Across rated applicants',
       icon: Star,
       iconBg: 'bg-amber-50 text-amber-600'
     }
@@ -52,7 +48,6 @@ export const AnalyticsCards: React.FC<AnalyticsCardsProps> = ({ analytics }) => 
                 {card.title}
               </p>
               <p className="text-2xl font-extrabold text-slate-900 mt-1">{card.value}</p>
-              <p className="text-[11px] text-slate-400 mt-0.5 truncate">{card.hint}</p>
             </div>
             <div className={`p-2.5 rounded-xl shrink-0 ${card.iconBg}`}>
               <Icon className="w-5 h-5" />

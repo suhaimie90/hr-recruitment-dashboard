@@ -35,6 +35,13 @@ export function filterApplications(apps: Application[], filters: FilterState): A
     if (filters.state !== 'ALL' && app.preferredState !== filters.state) return false;
     if (filters.minRating > 0 && app.rating < filters.minRating) return false;
 
+    // Sheet timestamps are "YYYY-MM-DD HH:mm:ss"; the date inputs give
+    // "YYYY-MM-DD". Comparing the first 10 chars as strings is correct
+    // for ISO-ordered dates and avoids timezone drift from Date parsing.
+    const appliedOn = String(app.timestamp).slice(0, 10);
+    if (filters.dateFrom && appliedOn < filters.dateFrom) return false;
+    if (filters.dateTo && appliedOn > filters.dateTo) return false;
+
     return true;
   });
 
@@ -149,6 +156,85 @@ function buildMonthlyTrend(apps: Application[]) {
   });
 
   return months.map(({ month, applications, hired }) => ({ month, applications, hired }));
+}
+
+/**
+ * Offer / Hired / Rejected are outcomes of one conversation, not three
+ * pieces of work — a recruiter offers, then the candidate either shows
+ * up or doesn't. Three separate board columns made two of them dead
+ * space, so they collapse into a single "Offer & Outcome" column with
+ * the result shown as a badge on the card.
+ */
+export function isTerminalStage(stage: string): boolean {
+  return /offer|hired|rejected/i.test(stage);
+}
+
+export function isHiredStage(stage: string): boolean {
+  return /hired/i.test(stage);
+}
+
+export function isRejectedStage(stage: string): boolean {
+  return /rejected/i.test(stage);
+}
+
+/**
+ * Hired and Rejected are conclusions. The dashboard won't move a
+ * candidate out of them — an admin corrects the Stage column in the
+ * spreadsheet if one was recorded by mistake.
+ */
+export function isDecidedStage(stage: string): boolean {
+  return isHiredStage(stage) || isRejectedStage(stage);
+}
+
+/**
+ * Stages move forward only. Backwards is nearly always a misclick, and
+ * allowing it fills the audit trail with churn that means nothing.
+ * Mirrors the rule Apps Script enforces — this just greys out the
+ * controls so nobody discovers it via an error message.
+ */
+export function canMoveToStage(
+  stages: string[],
+  current: string,
+  target: string
+): boolean {
+  if (current === target) return false;
+  if (isDecidedStage(current)) return false;
+
+  const from = stages.indexOf(current);
+  const to = stages.indexOf(target);
+
+  if (from === -1 || to === -1) return true;
+
+  return to > from;
+}
+
+export interface BoardColumn {
+  /** Stable key for React. */
+  key: string;
+  title: string;
+  /** Stage values that belong in this column. */
+  stages: string[];
+}
+
+/** Working stages stay one-per-column; terminal stages merge into one. */
+export function buildBoardColumns(stages: string[]): BoardColumn[] {
+  const columns: BoardColumn[] = [];
+  const terminal = stages.filter(isTerminalStage);
+
+  stages.forEach((stage) => {
+    if (isTerminalStage(stage)) return;
+    columns.push({ key: stage, title: stage, stages: [stage] });
+  });
+
+  if (terminal.length) {
+    columns.push({
+      key: '__outcome__',
+      title: terminal.length > 1 ? 'Offer & Outcome' : terminal[0],
+      stages: terminal
+    });
+  }
+
+  return columns;
 }
 
 /** Tailwind classes per stage, with a neutral fallback for custom stages. */

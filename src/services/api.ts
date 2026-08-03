@@ -2,7 +2,9 @@ import {
   Application,
   ActivityBundle,
   AppUser,
+  AssessmentCriterion,
   Interview,
+  Scorecard,
   Settings,
   ApplicationStage
 } from '../types';
@@ -87,6 +89,19 @@ export async function fetchActivity(applicationId: string): Promise<ActivityBund
 export async function fetchInterviews(): Promise<Interview[]> {
   const json = await get<{ data: Interview[] }>('interviews');
   return json.data;
+}
+
+/** Every scorecard recorded against one candidate, newest first. */
+export async function fetchAssessments(applicationId: string): Promise<Scorecard[]> {
+  const json = await get<{ scorecards: Scorecard[] }>('assessments', { applicationId });
+  return json.scorecards || [];
+}
+
+export async function saveAssessment(
+  applicationId: string,
+  criteria: AssessmentCriterion[]
+): Promise<void> {
+  await post('saveAssessment', { applicationId, criteria });
 }
 
 export async function updateStage(
