@@ -25,7 +25,14 @@ export interface Env {
   GAS_TOKEN?: string;
 }
 
-const READ_ACTIONS = ['bootstrap', 'applications', 'activity', 'interviews', 'assessments'];
+const READ_ACTIONS = [
+  'bootstrap',
+  'applications',
+  'application',
+  'activity',
+  'interviews',
+  'assessments'
+];
 
 const WRITE_ACTIONS = [
   'login',
@@ -33,20 +40,25 @@ const WRITE_ACTIONS = [
   'addNote',
   'updateTags',
   'scheduleInterview',
-  'saveAssessment'
+  'saveAssessment',
+  'cancelInterview',
+  'archiveApplication'
 ];
 
 /**
- * POSTs that are safe to retry. `login` only validates the caller
- * against the Users sheet and writes nothing, so a repeat is harmless
- * — and without this a transient Google hiccup locks someone out of
- * signing in, which is the most visible failure there is.
+ * POSTs that are safe to repeat.
  *
- * Every other POST appends to a sheet. Retrying those would duplicate
- * a note, an interview or a scorecard, so they surface the error and
- * let the user decide.
+ *   login       validates against the Users sheet and writes nothing.
+ *   updateStage sets a cell to a fixed value, and the script returns
+ *               early with `unchanged` when the stage already matches,
+ *               so a retry after a successful-but-unheard write is a
+ *               no-op rather than a duplicate audit row.
+ *
+ * Everything else APPENDS — a note, an interview, a scorecard.
+ * Retrying those would create a second row, so they surface the error
+ * and let the user decide.
  */
-const RETRYABLE_POST_ACTIONS = ['login'];
+const RETRYABLE_POST_ACTIONS = ['login', 'updateStage'];
 
 export interface ForwardResult {
   status: number;

@@ -24,7 +24,9 @@ import {
   fetchInterviews,
   updateStage,
   addNote,
-  scheduleInterview
+  scheduleInterview,
+  cancelInterview,
+  archiveApplication
 } from './services/api';
 
 import {
@@ -53,6 +55,13 @@ export default function App() {
   const [interviews, setInterviews] = useState<Interview[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // Concluded candidates drop off the board after a cutoff, and can be
+  // removed by hand. The server withholds them, so this genuinely
+  // shrinks the response rather than just hiding rows.
+  const [showArchived, setShowArchived] = useState(false);
+  const [archivedCount, setArchivedCount] = useState(0);
+  const [archiveAfterDays, setArchiveAfterDays] = useState(30);
 
   // UI
   const [activeTab, setActiveTab] = useState<ActiveTab>('pipeline');
@@ -84,9 +93,8 @@ export default function App() {
       : DEFAULT_STAGES;
 
   // Prefer what the server resolved. Fall back to the role name only
-  // when an older Apps Script deployment doesn't send these fields.
+  // when an older Apps Script deployment doesn't send the field.
   const canEdit = user?.canEdit ?? (user?.role ?? '').toLowerCase() !== 'viewer';
-  const canViewStats = user?.canViewStats !== false;
 
   // ── Session restore ─────────────────────────────────────
   useEffect(() => {
@@ -143,17 +151,19 @@ export default function App() {
 
     try {
       const [apps, ints] = await Promise.all([
-        fetchApplications(),
+        fetchApplications(showArchived),
         fetchInterviews().catch(() => [] as Interview[])
       ]);
-      setApplications(apps);
+      setApplications(apps.data);
+      setArchivedCount(apps.archivedCount);
+      setArchiveAfterDays(apps.archiveAfterDays);
       setInterviews(ints);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load data from Google Sheets.');
     } finally {
       setIsLoading(false);
     }
-  }, [user]);
+  }, [user, showArchived]);
 
   useEffect(() => {
     loadData();
@@ -182,8 +192,6 @@ export default function App() {
     stage: ApplicationStage,
     remarks?: string
   ) => {
-    const previous = applications;
-
     setApplications((prev) =>
       prev.map((app) => (app.applicationId === applicationId ? { ...app, stage } : app))
     );
@@ -194,8 +202,16 @@ export default function App() {
     try {
       await updateStage(applicationId, stage, remarks);
     } catch (err) {
-      setApplications(previous); // roll back the optimistic update
-      alert(`Could not update stage: ${err instanceof Error ? err.message : err}`);
+      // A failed response does NOT mean a failed write — Apps Script
+      // commits the row before replying, and the reply is what tends to
+      // get lost. Rolling back would show the old stage while the sheet
+      // holds the new one, so reload and let the sheet be the truth.
+      console.error('Stage update did not confirm:', err);
+      await loadData();
+      alert(
+        'Could not confirm the stage change with Google. The board has been ' +
+          'refreshed from the sheet — check whether it saved before trying again.'
+      );
     }
   };
 
@@ -234,6 +250,43 @@ export default function App() {
     }
   };
 
+  const handleArchive = async (app: Application) => {
+    const verb = showArchived ? 'restore' : 'remove';
+
+    if (
+      !window.confirm(
+        `${verb === 'remove' ? 'Remove' : 'Restore'} ${app.fullName}${
+          verb === 'remove' ? ' from the board? The row stays in the spreadsheet.' : ' to the board?'
+        }`
+      )
+    ) {
+      return;
+    }
+
+    // Drop it locally first — the list is long and a round trip is slow.
+    setApplications((prev) => prev.filter((a) => a.applicationId !== app.applicationId));
+    setSelectedApplication((prev) =>
+      prev?.applicationId === app.applicationId ? null : prev
+    );
+
+    try {
+      await archiveApplication(app.applicationId, { restore: showArchived });
+      setArchivedCount((n) => (showArchived ? Math.max(0, n - 1) : n + 1));
+    } catch (err) {
+      await loadData();
+      alert(err instanceof Error ? err.message : 'Could not update the board');
+    }
+  };
+
+  const handleCancelInterview = async (interview: Interview) => {
+    if (!interview.rowNumber || !interview.applicationId) {
+      throw new Error('This interview is missing its sheet reference — refresh and try again');
+    }
+
+    await cancelInterview(interview.applicationId, interview.rowNumber);
+    setInterviews(await fetchInterviews().catch(() => interviews));
+  };
+
   const handleScheduleInterview = async (
     applicationId: string,
     data: Parameters<typeof scheduleInterview>[1]
@@ -262,7 +315,6 @@ export default function App() {
         activeTab={activeTab}
         setActiveTab={setActiveTab}
         user={user}
-        canViewStats={canViewStats}
         onLogout={handleLogout}
         totalApplicants={applications.length}
         interviewCount={interviews.length}
@@ -276,6 +328,10 @@ export default function App() {
           onRefresh={loadData}
           isLoading={isLoading}
           totalFilteredCount={visibleApplications.length}
+          archivedCount={archivedCount}
+          archiveAfterDays={archiveAfterDays}
+          showArchived={showArchived}
+          setShowArchived={setShowArchived}
         />
 
         <main className="flex-1 overflow-y-auto p-6">
@@ -352,6 +408,8 @@ export default function App() {
                   onSelectApplication={handleSelectApplication}
                   onSelectResume={setSelectedResumeApp}
                   onUpdateStage={handleUpdateStage}
+                  showingArchived={showArchived}
+                  onArchive={handleArchive}
                 />
               ) : (
                 <CandidateListView
@@ -361,12 +419,14 @@ export default function App() {
                   onSelectApplication={handleSelectApplication}
                   onSelectResume={setSelectedResumeApp}
                   onUpdateStage={handleUpdateStage}
+                  showingArchived={showArchived}
+                  onArchive={handleArchive}
                 />
               )}
             </div>
           )}
 
-          {activeTab === 'analytics' && canViewStats && (
+          {activeTab === 'analytics' && (
             <Suspense
               fallback={
                 <div className="flex justify-center py-20">
@@ -379,7 +439,12 @@ export default function App() {
           )}
 
           {activeTab === 'interviews' && (
-            <InterviewsView interviews={interviews} applications={applications} />
+            <InterviewsView
+              interviews={interviews}
+              applications={applications}
+              canEdit={canEdit}
+              onCancel={handleCancelInterview}
+            />
           )}
         </main>
       </div>

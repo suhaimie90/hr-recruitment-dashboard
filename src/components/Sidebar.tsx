@@ -9,7 +9,6 @@ interface SidebarProps {
   activeTab: ActiveTab;
   setActiveTab: (tab: ActiveTab) => void;
   user: AppUser;
-  canViewStats: boolean;
   onLogout: () => void;
   totalApplicants: number;
   interviewCount: number;
@@ -19,24 +18,18 @@ export const Sidebar: React.FC<SidebarProps> = ({
   activeTab,
   setActiveTab,
   user,
-  canViewStats,
   onLogout,
   totalApplicants,
   interviewCount
 }) => {
-  // Analytics is strategic-level only. Supervisors don't get the tab —
-  // and Apps Script scopes their data regardless of what the UI shows.
   const navItems = [
     { id: 'pipeline', label: 'Pipeline Board', icon: Kanban, badge: totalApplicants },
     { id: 'candidates', label: 'All Applicants', icon: Users, badge: null },
     { id: 'interviews', label: 'Interview Schedule', icon: Calendar, badge: interviewCount || null },
-    ...(canViewStats
-      ? [{ id: 'analytics', label: 'Recruitment Analytics', icon: BarChart3, badge: null }]
-      : [])
+    { id: 'analytics', label: 'Recruitment Analytics', icon: BarChart3, badge: null }
   ];
 
   const isViewer = user.role.toLowerCase() === 'viewer';
-  const scopedBranches = user.locations ?? [];
 
   return (
     <aside className="w-64 bg-slate-900 text-slate-100 flex flex-col h-screen border-r border-slate-800 shrink-0 select-none">
@@ -87,28 +80,9 @@ export const Sidebar: React.FC<SidebarProps> = ({
         })}
 
         <div className="px-3 pt-5 pb-2 text-[11px] font-semibold text-slate-400 uppercase tracking-wider">
-          Your Access
+          Data Source
         </div>
-
-        {scopedBranches.length === 0 ? (
-          <div className="px-3 py-2 text-[11px] text-slate-500 leading-relaxed">
-            All branches
-          </div>
-        ) : (
-          <div className="px-3 py-2 space-y-1">
-            {scopedBranches.map((branch) => (
-              <div
-                key={branch}
-                title={branch}
-                className="text-[11px] text-slate-300 bg-slate-800/60 border border-slate-700/50 rounded px-2 py-1 truncate"
-              >
-                {branch}
-              </div>
-            ))}
-          </div>
-        )}
-
-        <div className="px-3 pt-3 text-[11px] text-slate-500 leading-relaxed">
+        <div className="px-3 py-2 text-[11px] text-slate-500 leading-relaxed">
           Applications sync live from the Google Sheet fed by the public careers form.
         </div>
       </nav>

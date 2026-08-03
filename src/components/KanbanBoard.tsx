@@ -1,5 +1,5 @@
 import React from 'react';
-import { Star, Clock, MapPin, FileText, Briefcase } from 'lucide-react';
+import { Star, Clock, MapPin, FileText, Briefcase, X, Undo2 } from 'lucide-react';
 import { Application, ApplicationStage } from '../types';
 import { initials, stageStyle, buildBoardColumns, canMoveToStage, isDecidedStage } from '../lib/derive';
 
@@ -7,18 +7,23 @@ interface KanbanBoardProps {
   applications: Application[];
   stages: string[];
   canEdit: boolean;
+  /** True when the board is showing archived rows, so the action restores. */
+  showingArchived: boolean;
   onSelectApplication: (app: Application) => void;
   onSelectResume: (app: Application) => void;
   onUpdateStage: (applicationId: string, stage: ApplicationStage) => void;
+  onArchive: (app: Application) => void;
 }
 
 export const KanbanBoard: React.FC<KanbanBoardProps> = ({
   applications,
   stages,
   canEdit,
+  showingArchived,
   onSelectApplication,
   onSelectResume,
-  onUpdateStage
+  onUpdateStage,
+  onArchive
 }) => {
   const columns = buildBoardColumns(stages);
 
@@ -78,6 +83,27 @@ export const KanbanBoard: React.FC<KanbanBoardProps> = ({
                         >
                           {app.stage}
                         </span>
+                      )}
+
+                      {canEdit && (
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            onArchive(app);
+                          }}
+                          title={
+                            showingArchived
+                              ? 'Put back on the board'
+                              : 'Remove from the board (kept in the spreadsheet)'
+                          }
+                          className="p-1 -mt-1 -mr-1 text-slate-300 hover:text-rose-600 hover:bg-rose-50 rounded transition-colors cursor-pointer shrink-0"
+                        >
+                          {showingArchived ? (
+                            <Undo2 className="w-3.5 h-3.5" />
+                          ) : (
+                            <X className="w-3.5 h-3.5" />
+                          )}
+                        </button>
                       )}
                     </div>
 

@@ -8,23 +8,27 @@
 /** Free-form: the pipeline stages come from Settings (Category = "Stage"). */
 export type ApplicationStage = string;
 
+/**
+ * What the board, table, filters, search and analytics need.
+ *
+ * IC number, address, postcode, cover message and resume filename are
+ * deliberately absent — they only appear in the applicant drawer, so
+ * the server sends them one candidate at a time (see ApplicationDetail).
+ * That keeps the bulk response small and stops hundreds of IC numbers
+ * reaching the browser at all.
+ */
 export interface Application {
   applicationId: string;
   timestamp: string;
   fullName: string;
-  icNumber: string;
   email: string;
   phone: string;
-  address: string;
   city: string;
   state: string;
-  postcode: string;
   position: string;
   availableDate: string;
   expectedSalary: string;
   experience: string;
-  coverMessage: string;
-  resumeFileName: string;
   resumeUrl: string;
   preferredState: string;
   preferredBranch: string;
@@ -38,6 +42,16 @@ export interface Application {
 
   /** Sheet row, useful when debugging against the spreadsheet. */
   rowNumber: number;
+}
+
+/** One candidate in full — fetched when the drawer opens. */
+export interface ApplicationDetail extends Application {
+  icNumber: string;
+  address: string;
+  postcode: string;
+  coverMessage: string;
+  resumeFileName: string;
+  archived: boolean;
 }
 
 /** One row of the AuditLog sheet. Doubles as note and timeline entry. */
@@ -56,25 +70,26 @@ export interface Interview {
   interviewerRole: string;
   scheduledAt: string;
   durationMinutes: number;
-  type: string;
+  /** "Scheduled" | "Cancelled" | "Completed" — free text from the sheet. */
   status: string;
+  type: string;
+  /** Meeting link or, for face-to-face, the location. */
   meetingLink: string;
+  /** Sheet row — the Interviews sheet has no ID column of its own. */
+  rowNumber?: number;
 }
 
 /**
- * A row of the Users sheet, plus the permissions Apps Script resolved
- * from it. These flags are advisory for the UI only — the server
- * enforces the same rules independently, so hiding a control here is
- * convenience, not security.
+ * A row of the Users sheet, plus the one permission Apps Script
+ * resolves from it. `canEdit` is advisory for the UI — the server
+ * enforces it independently, so hiding a control here is convenience,
+ * not security.
  */
 export interface AppUser {
   email: string;
   name: string;
   role: string;
-  /** Branches this user may see. Empty or absent = every branch. */
-  locations?: string[];
   canEdit?: boolean;
-  canViewStats?: boolean;
 }
 
 /** Settings sheet grouped by Category, ordered by Sort, inactive dropped. */

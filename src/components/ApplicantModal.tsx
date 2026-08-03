@@ -23,6 +23,7 @@ import {
 } from 'lucide-react';
 import {
   Application,
+  ApplicationDetail,
   ApplicationStage,
   AppUser,
   AssessmentCriterion,
@@ -31,7 +32,13 @@ import {
   Scorecard,
   Settings
 } from '../types';
-import { fetchActivity, fetchAssessments, saveAssessment, scheduleInterview } from '../services/api';
+import {
+  fetchActivity,
+  fetchApplication,
+  fetchAssessments,
+  saveAssessment,
+  scheduleInterview
+} from '../services/api';
 import { AssessmentPanel } from './AssessmentPanel';
 import {
   initials,
@@ -77,6 +84,9 @@ export const ApplicantModal: React.FC<ApplicantModalProps> = ({
   const [auditLog, setAuditLog] = useState<AuditEntry[]>([]);
   const [interviews, setInterviews] = useState<Interview[]>([]);
   const [scorecards, setScorecards] = useState<Scorecard[]>([]);
+  // IC number, address, postcode and cover message are not in the list
+  // payload — fetched here for just this candidate.
+  const [detail, setDetail] = useState<ApplicationDetail | null>(null);
   const [isLoadingActivity, setIsLoadingActivity] = useState(false);
 
   const [noteContent, setNoteContent] = useState('');
@@ -104,17 +114,20 @@ export const ApplicantModal: React.FC<ApplicantModalProps> = ({
     try {
       // Assessments live in their own sheet, which may not exist yet —
       // fail soft so the rest of the drawer still loads.
-      const [bundle, cards] = await Promise.all([
+      const [bundle, cards, full] = await Promise.all([
         fetchActivity(applicationId),
-        fetchAssessments(applicationId).catch(() => [] as Scorecard[])
+        fetchAssessments(applicationId).catch(() => [] as Scorecard[]),
+        fetchApplication(applicationId).catch(() => null)
       ]);
       setAuditLog(bundle.auditLog);
       setInterviews(bundle.interviews);
       setScorecards(cards);
+      setDetail(full);
     } catch {
       setAuditLog([]);
       setInterviews([]);
       setScorecards([]);
+      setDetail(null);
     } finally {
       setIsLoadingActivity(false);
     }
@@ -128,6 +141,7 @@ export const ApplicantModal: React.FC<ApplicantModalProps> = ({
     setShowInterviewForm(false);
     setShowRejectForm(false);
     setRejectReason('');
+    setDetail(null);
     loadActivity();
   }, [applicationId, loadActivity]);
 
@@ -497,16 +511,18 @@ export const ApplicantModal: React.FC<ApplicantModalProps> = ({
                             <p className="text-[11px] text-slate-500 truncate">
                               {interview.interviewer} · {interview.scheduledAt}
                             </p>
+                            {/* Usually a physical location — rounds are face to face. */}
+                            {interview.meetingLink && (
+                              <p className="text-[11px] text-slate-500 truncate flex items-center gap-1 mt-0.5">
+                                <MapPin className="w-3 h-3 shrink-0" />
+                                {interview.meetingLink}
+                              </p>
+                            )}
                           </div>
-                          {interview.meetingLink && (
-                            <a
-                              href={interview.meetingLink}
-                              target="_blank"
-                              rel="noreferrer"
-                              className="text-[11px] font-semibold bg-indigo-600 hover:bg-indigo-500 text-white px-2.5 py-1.5 rounded-lg shrink-0"
-                            >
-                              Join
-                            </a>
+                          {/cancel/i.test(interview.status || '') && (
+                            <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-rose-50 text-rose-700 border border-rose-200 shrink-0">
+                              Cancelled
+                            </span>
                           )}
                         </div>
                       ))}
@@ -527,7 +543,12 @@ export const ApplicantModal: React.FC<ApplicantModalProps> = ({
               )}
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <Field icon={CreditCard} label="IC / Passport" value={application.icNumber} />
+                <Field
+                  icon={CreditCard}
+                  label="IC / Passport"
+                  value={detail ? detail.icNumber : ""}
+                  loading={!detail}
+                />
                 <Field icon={Briefcase} label="Position Applied" value={application.position} />
                 <Field icon={MapPin} label="Preferred Branch" value={application.preferredBranch} />
                 <Field icon={MapPin} label="Preferred State" value={application.preferredState} />
@@ -538,20 +559,25 @@ export const ApplicantModal: React.FC<ApplicantModalProps> = ({
                 <Field
                   icon={Home}
                   label="Address"
-                  value={[application.address, application.city, application.postcode, application.state]
-                    .filter(Boolean)
-                    .join(', ')}
+                  value={
+                    detail
+                      ? [detail.address, detail.city, detail.postcode, detail.state]
+                          .filter(Boolean)
+                          .join(', ')
+                      : ''
+                  }
+                  loading={!detail}
                 />
                 <Field icon={Calendar} label="Applied On" value={application.timestamp} />
               </div>
 
-              {application.coverMessage && (
+              {detail?.coverMessage && (
                 <div className="bg-white p-4 rounded-xl border border-slate-200">
                   <h4 className="text-xs font-bold text-slate-500 uppercase tracking-wide mb-2">
                     About the Applicant
                   </h4>
                   <p className="text-sm text-slate-700 leading-relaxed whitespace-pre-wrap">
-                    {application.coverMessage}
+                    {detail.coverMessage}
                   </p>
                 </div>
               )}
@@ -718,7 +744,7 @@ export const ApplicantModal: React.FC<ApplicantModalProps> = ({
                     <input
                       value={interviewLink}
                       onChange={(e) => setInterviewLink(e.target.value)}
-                      placeholder="Meeting link or location"
+                      placeholder="Location (e.g. SETIAHUB Kota Bharu, meeting room)"
                       className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-xs outline-none focus:border-indigo-500"
                     />
                     <button
@@ -742,16 +768,17 @@ export const ApplicantModal: React.FC<ApplicantModalProps> = ({
                           <p className="text-[11px] text-slate-500 truncate">
                             {interview.interviewer} · {interview.scheduledAt}
                           </p>
+                          {interview.meetingLink && (
+                            <p className="text-[11px] text-slate-500 truncate flex items-center gap-1 mt-0.5">
+                              <MapPin className="w-3 h-3 shrink-0" />
+                              {interview.meetingLink}
+                            </p>
+                          )}
                         </div>
-                        {interview.meetingLink && (
-                          <a
-                            href={interview.meetingLink}
-                            target="_blank"
-                            rel="noreferrer"
-                            className="text-[11px] font-semibold bg-indigo-600 hover:bg-indigo-500 text-white px-2.5 py-1.5 rounded-lg shrink-0"
-                          >
-                            Join
-                          </a>
+                        {/cancel/i.test(interview.status || '') && (
+                          <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-rose-50 text-rose-700 border border-rose-200 shrink-0">
+                            Cancelled
+                          </span>
                         )}
                       </div>
                     ))}
@@ -803,17 +830,21 @@ export const ApplicantModal: React.FC<ApplicantModalProps> = ({
   );
 };
 
-const Field: React.FC<{ icon: React.ElementType; label: string; value: string }> = ({
-  icon: Icon,
-  label,
-  value
-}) => (
+const Field: React.FC<{
+  icon: React.ElementType;
+  label: string;
+  value: string;
+  /** True while the per-candidate detail request is still in flight. */
+  loading?: boolean;
+}> = ({ icon: Icon, label, value, loading }) => (
   <div className="bg-white p-3 rounded-lg border border-slate-200">
     <div className="flex items-center gap-1.5 text-[11px] font-semibold text-slate-400 uppercase tracking-wide mb-1">
       <Icon className="w-3 h-3" />
       {label}
     </div>
-    <p className="text-sm text-slate-800 font-medium break-words">{value || '—'}</p>
+    <p className="text-sm text-slate-800 font-medium break-words">
+      {loading ? <span className="text-slate-300">Loading…</span> : value || '—'}
+    </p>
   </div>
 );
 

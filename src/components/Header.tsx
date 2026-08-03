@@ -1,5 +1,5 @@
 import React, { useMemo } from 'react';
-import { Search, MapPin, Briefcase, RefreshCw, SlidersHorizontal, CalendarDays, X } from 'lucide-react';
+import { Search, MapPin, Briefcase, RefreshCw, SlidersHorizontal, CalendarDays, X, Archive } from 'lucide-react';
 import { Application, FilterState } from '../types';
 import { uniqueValues } from '../lib/derive';
 
@@ -10,6 +10,11 @@ interface HeaderProps {
   onRefresh: () => void;
   isLoading: boolean;
   totalFilteredCount: number;
+  /** Rows the server withheld as archived. */
+  archivedCount: number;
+  archiveAfterDays: number;
+  showArchived: boolean;
+  setShowArchived: (value: boolean) => void;
 }
 
 export const Header: React.FC<HeaderProps> = ({
@@ -18,7 +23,11 @@ export const Header: React.FC<HeaderProps> = ({
   applications,
   onRefresh,
   isLoading,
-  totalFilteredCount
+  totalFilteredCount,
+  archivedCount,
+  archiveAfterDays,
+  showArchived,
+  setShowArchived
 }) => {
   // Filter options come from the data itself, so a new branch or a
   // typed-in position appears here without a code change.
@@ -149,6 +158,27 @@ export const Header: React.FC<HeaderProps> = ({
             <span className="w-2 h-2 rounded-full bg-indigo-500 animate-pulse" />
             <span>{totalFilteredCount} Applicants</span>
           </div>
+
+          {/* Archived rows are withheld by the server, so this reloads
+              rather than filtering what's already in memory. */}
+          {(archivedCount > 0 || showArchived) && (
+            <button
+              onClick={() => setShowArchived(!showArchived)}
+              title={
+                showArchived
+                  ? 'Back to the active board'
+                  : `Concluded candidates are removed after ${archiveAfterDays} days`
+              }
+              className={`flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1.5 rounded-lg border transition-colors cursor-pointer ${
+                showArchived
+                  ? 'bg-slate-900 text-white border-slate-900'
+                  : 'bg-white text-slate-600 border-slate-200 hover:border-slate-300'
+              }`}
+            >
+              <Archive className="w-3.5 h-3.5" />
+              {showArchived ? 'Viewing archived' : `Archived (${archivedCount})`}
+            </button>
+          )}
         </div>
       </div>
     </header>

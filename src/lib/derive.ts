@@ -19,7 +19,6 @@ export function filterApplications(apps: Application[], filters: FilterState): A
         app.position,
         app.preferredBranch,
         app.city,
-        app.icNumber,
         app.applicationId,
         ...app.tags
       ]
@@ -187,25 +186,20 @@ export function isDecidedStage(stage: string): boolean {
 }
 
 /**
- * Stages move forward only. Backwards is nearly always a misclick, and
- * allowing it fills the audit trail with churn that means nothing.
- * Mirrors the rule Apps Script enforces — this just greys out the
+ * Working stages move freely in both directions — sending someone back
+ * for another interview is legitimate. Only Hired and Rejected lock,
+ * and undoing those needs an administrator in the spreadsheet.
+ *
+ * Mirrors the rule Apps Script enforces; this just greys out the
  * controls so nobody discovers it via an error message.
  */
 export function canMoveToStage(
-  stages: string[],
+  _stages: string[],
   current: string,
   target: string
 ): boolean {
   if (current === target) return false;
-  if (isDecidedStage(current)) return false;
-
-  const from = stages.indexOf(current);
-  const to = stages.indexOf(target);
-
-  if (from === -1 || to === -1) return true;
-
-  return to > from;
+  return !isDecidedStage(current);
 }
 
 export interface BoardColumn {

@@ -1,5 +1,6 @@
 import {
   Application,
+  ApplicationDetail,
   ActivityBundle,
   AppUser,
   AssessmentCriterion,
@@ -71,14 +72,49 @@ export async function fetchBootstrap(): Promise<{ user: AppUser; settings: Setti
   return get<{ user: AppUser; settings: Settings }>('bootstrap');
 }
 
+export interface ApplicationsResult {
+  data: Application[];
+  /** Rows the server withheld — archived, or concluded and past the cutoff. */
+  archivedCount: number;
+  archiveAfterDays: number;
+}
+
 /**
- * Every application in one call. Filtering and sorting happen in the
- * browser — the dataset is small and this keeps search instant instead
- * of hitting Apps Script on every keystroke.
+ * The active applications in one call. Search, filters and sorting
+ * happen in the browser, so they stay instant.
+ *
+ * Archived rows are excluded BY THE SERVER, which is the point — hiding
+ * them client-side would still ship every row over the wire.
  */
-export async function fetchApplications(): Promise<Application[]> {
-  const json = await get<{ data: Application[] }>('applications');
+export async function fetchApplications(includeArchived = false): Promise<ApplicationsResult> {
+  const json = await get<ApplicationsResult>(
+    'applications',
+    includeArchived ? { includeArchived: '1' } : {}
+  );
+
+  return {
+    data: json.data || [],
+    archivedCount: json.archivedCount || 0,
+    archiveAfterDays: json.archiveAfterDays || 30
+  };
+}
+
+/**
+ * One candidate in full. The list response omits IC number, address,
+ * postcode and cover message, so the drawer fetches them for just the
+ * person being opened.
+ */
+export async function fetchApplication(applicationId: string): Promise<ApplicationDetail> {
+  const json = await get<{ data: ApplicationDetail }>('application', { applicationId });
   return json.data;
+}
+
+/** Removes a candidate from the board, or puts one back. */
+export async function archiveApplication(
+  applicationId: string,
+  options: { restore?: boolean; reason?: string } = {}
+): Promise<void> {
+  await post('archiveApplication', { applicationId, ...options });
 }
 
 export async function fetchActivity(applicationId: string): Promise<ActivityBundle> {
@@ -102,6 +138,19 @@ export async function saveAssessment(
   criteria: AssessmentCriterion[]
 ): Promise<void> {
   await post('saveAssessment', { applicationId, criteria });
+}
+
+/**
+ * Marks an interview cancelled. `rowNumber` comes straight from the
+ * fetched interview — the server re-checks it against applicationId
+ * before writing, so a stale list can't cancel the wrong row.
+ */
+export async function cancelInterview(
+  applicationId: string,
+  rowNumber: number,
+  reason?: string
+): Promise<void> {
+  await post('cancelInterview', { applicationId, rowNumber, reason });
 }
 
 export async function updateStage(

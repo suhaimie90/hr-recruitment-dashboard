@@ -26,9 +26,8 @@ export const ResumeViewerModal: React.FC<ResumeViewerModalProps> = ({ applicatio
             <FileText className="w-5 h-5 text-indigo-400 shrink-0" />
             <div className="overflow-hidden">
               <p className="font-bold text-sm truncate">{application.fullName}</p>
-              <p className="text-xs text-slate-400 truncate">
-                {application.resumeFileName || 'Resume'}
-              </p>
+              {/* resumeFileName is detail-only now; the URL is enough here. */}
+              <p className="text-xs text-slate-400 truncate">Resume</p>
             </div>
           </div>
 

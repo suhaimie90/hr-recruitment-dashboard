@@ -1,5 +1,5 @@
 import React from 'react';
-import { Star, FileText, ChevronRight } from 'lucide-react';
+import { Star, FileText, ChevronRight, X, Undo2 } from 'lucide-react';
 import { Application, ApplicationStage } from '../types';
 import { initials, stageStyle, canMoveToStage, isDecidedStage } from '../lib/derive';
 
@@ -10,6 +10,9 @@ interface CandidateListViewProps {
   onSelectApplication: (app: Application) => void;
   onSelectResume: (app: Application) => void;
   onUpdateStage: (applicationId: string, stage: ApplicationStage) => void;
+  /** True when the table is showing archived rows, so the action restores. */
+  showingArchived: boolean;
+  onArchive: (app: Application) => void;
 }
 
 export const CandidateListView: React.FC<CandidateListViewProps> = ({
@@ -18,7 +21,9 @@ export const CandidateListView: React.FC<CandidateListViewProps> = ({
   canEdit,
   onSelectApplication,
   onSelectResume,
-  onUpdateStage
+  onUpdateStage,
+  showingArchived,
+  onArchive
 }) => {
   return (
     <div className="bg-white rounded-xl border border-slate-200 shadow-2xs overflow-hidden">
@@ -134,6 +139,23 @@ export const CandidateListView: React.FC<CandidateListViewProps> = ({
                       >
                         <ChevronRight className="w-4 h-4" />
                       </button>
+                      {canEdit && (
+                        <button
+                          onClick={() => onArchive(app)}
+                          title={
+                            showingArchived
+                              ? 'Put back on the board'
+                              : 'Remove from the board (kept in the spreadsheet)'
+                          }
+                          className="p-1.5 text-slate-300 hover:text-rose-600 hover:bg-rose-50 rounded transition-colors cursor-pointer"
+                        >
+                          {showingArchived ? (
+                            <Undo2 className="w-4 h-4" />
+                          ) : (
+                            <X className="w-4 h-4" />
+                          )}
+                        </button>
+                      )}
                     </div>
                   </td>
                 </tr>
