@@ -30,8 +30,8 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onLogin, error }) => {
             <div className="w-12 h-12 mx-auto rounded-xl bg-gradient-to-tr from-indigo-600 via-blue-600 to-cyan-500 flex items-center justify-center shadow-lg shadow-indigo-500/20 mb-3">
               <Building2 className="w-6 h-6 text-white" />
             </div>
-            <h1 className="text-lg font-bold text-white tracking-tight">TalentFlow</h1>
-            <p className="text-xs text-slate-400 mt-0.5">HR Recruitment Management</p>
+            <h1 className="text-lg font-bold text-white tracking-tight">SetiaHub</h1>
+            <p className="text-xs text-slate-400 mt-0.5">Talent Recruitment System</p>
           </div>
 
           <form onSubmit={handleSubmit} className="p-7 space-y-4">

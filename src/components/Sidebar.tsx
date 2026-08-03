@@ -46,8 +46,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
             <Building2 className="w-5 h-5 text-white" />
           </div>
           <div>
-            <h1 className="font-bold text-base tracking-tight text-white">TalentFlow</h1>
-            <p className="text-xs text-slate-400">HR Recruitment Hub</p>
+            <h1 className="font-bold text-base tracking-tight text-white">SetiaHub</h1>
+            <p className="text-xs text-slate-400">Talent Recruitment System </p>
           </div>
         </div>
       </div>
