@@ -36,6 +36,18 @@ const WRITE_ACTIONS = [
   'saveAssessment'
 ];
 
+/**
+ * POSTs that are safe to retry. `login` only validates the caller
+ * against the Users sheet and writes nothing, so a repeat is harmless
+ * — and without this a transient Google hiccup locks someone out of
+ * signing in, which is the most visible failure there is.
+ *
+ * Every other POST appends to a sheet. Retrying those would duplicate
+ * a note, an interview or a scorecard, so they surface the error and
+ * let the user decide.
+ */
+const RETRYABLE_POST_ACTIONS = ['login'];
+
 export interface ForwardResult {
   status: number;
   body: unknown;
@@ -92,14 +104,19 @@ export async function forward(
       // Apps Script has no OPTIONS handler, so an application/json
       // content-type would trigger a CORS preflight and fail. text/plain
       // is the standard workaround and is what the public form uses too.
-      const upstream = await fetch(GAS_URL, {
-        method: 'POST',
-        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-        body: JSON.stringify({ ...payload, token: GAS_TOKEN }),
-        redirect: 'follow'
-      });
+      const post = () =>
+        fetch(GAS_URL, {
+          method: 'POST',
+          headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+          body: JSON.stringify({ ...payload, token: GAS_TOKEN }),
+          redirect: 'follow'
+        });
 
-      return { status: 200, body: await parseUpstream(upstream) };
+      if (RETRYABLE_POST_ACTIONS.includes(action)) {
+        return { status: 200, body: await withRetry(post) };
+      }
+
+      return { status: 200, body: await parseUpstream(await post()) };
     }
 
     return { status: 405, body: { result: 'error', message: 'Method not allowed' } };
@@ -126,12 +143,14 @@ export async function forward(
  * Deliberately NOT used for POST: a write that appears to fail may
  * already have hit the sheet, and retrying would duplicate the row.
  */
-async function fetchJsonWithRetry(url: string, attempts = 3) {
+async function withRetry(
+  send: () => Promise<{ text(): Promise<string> }>,
+  attempts = 3
+) {
   let last: unknown = null;
 
   for (let i = 0; i < attempts; i++) {
-    const upstream = await fetch(url, { redirect: 'follow' });
-    const parsed = await parseUpstream(upstream);
+    const parsed = await parseUpstream(await send());
 
     // A real script response always carries `result`. The synthetic
     // error object from parseUpstream carries `raw`.
@@ -148,6 +167,9 @@ async function fetchJsonWithRetry(url: string, attempts = 3) {
   return last;
 }
 
+const fetchJsonWithRetry = (url: string) =>
+  withRetry(() => fetch(url, { redirect: 'follow' }));
+
 /**
  * Apps Script answers with an HTML error page when the deployment is
  * misconfigured or the script throws before ContentService runs.
@@ -162,8 +184,10 @@ async function parseUpstream(upstream: { text(): Promise<string> }) {
     return {
       result: 'error',
       message:
-        'Apps Script returned a non-JSON response. Check that the deployment uses ' +
-        '"Execute as: Me" and "Who has access: Anyone", and that you deployed a NEW version.',
+        'Google did not return a valid response. This is usually temporary — ' +
+        'please try again. If it persists, check that the Apps Script deployment ' +
+        'uses "Execute as: Me" and "Who has access: Anyone", and that a NEW ' +
+        'version was deployed.',
       raw: text.slice(0, 300)
     };
   }

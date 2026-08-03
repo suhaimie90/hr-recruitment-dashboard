@@ -89,10 +89,12 @@ async function run(baseUrl, userEmail) {
   console.log('');
 
   if (/are not set/i.test(msg)) {
-    console.log('  CAUSE: GAS_URL / GAS_TOKEN never reached the build.');
-    console.log('  FIX:   Vercel → Settings → Environment Variables. Confirm both');
-    console.log('         exist with no VITE_ prefix, then Deployments → ⋯ → Redeploy.');
-    console.log('         Env changes do NOT apply to a build that already ran.');
+    console.log('  CAUSE: GAS_URL / GAS_TOKEN did not reach the running deployment.');
+    console.log('  FIX:   1. Confirm both exist in the project settings, with no VITE_ prefix,');
+    console.log('            and are set for the PRODUCTION environment (not just Preview).');
+    console.log('         2. Redeploy. Adding a variable does NOT apply it to a deployment');
+    console.log('            that already ran — Cloudflare Pages: Deployments → ⋯ → Retry;');
+    console.log('            Vercel: Deployments → ⋯ → Redeploy.');
   } else if (/unauthor/i.test(msg)) {
     console.log('  CAUSE: GAS_TOKEN in Vercel != DASHBOARD_TOKEN in Config.gs.');
     console.log('  FIX:   Re-copy the value from .env.local WITHOUT the surrounding');
