@@ -31,7 +31,7 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onLogin, error }) => {
               <Building2 className="w-6 h-6 text-white" />
             </div>
             <h1 className="text-lg font-bold text-white tracking-tight">SetiaHub</h1>
-            <p className="text-xs text-slate-400 mt-0.5">Talent Recruitment System</p>
+            <p className="text-xs text-slate-400 mt-0.5">SetiaHub Recruitment System</p>
           </div>
 
           <form onSubmit={handleSubmit} className="p-7 space-y-4">
@@ -44,6 +44,7 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onLogin, error }) => {
                 type="email"
                 required
                 autoFocus
+                placeholder="Email"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
                 className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all"
