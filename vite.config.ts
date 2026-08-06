@@ -6,10 +6,13 @@ import { defineConfig, loadEnv, type Plugin, type ViteDevServer } from 'vite';
 // and production can't drift.
 import { forward } from './functions/api/gas';
 import { forward as forwardData } from './functions/api/data';
-// submit.ts exports onRequest directly rather than a forward() — it
-// needs the raw Request (for request.json()), which doesn't fit the
-// (method, query, body) shape the other two functions use.
+// These export onRequest directly rather than a forward() — they need
+// the raw Request (for request.json(), redirects, or Set-Cookie),
+// which doesn't fit the (method, query, body) shape the other two use.
 import { onRequest as submitOnRequest } from './functions/api/submit';
+import { onRequest as authLoginOnRequest } from './functions/api/auth/login';
+import { onRequest as authCallbackOnRequest } from './functions/api/auth/callback';
+import { onRequest as authLogoutOnRequest } from './functions/api/auth/logout';
 
 /**
  * Vercel serverless functions don't run under `vite dev`, so this
@@ -18,14 +21,16 @@ import { onRequest as submitOnRequest } from './functions/api/submit';
  */
 function apiDevServer(env: Record<string, string>): Plugin {
   // Both routes read the request the same way; only the handler and
-  // the env slice differ.
+  // the env slice differ. The Cookie header is passed straight through
+  // (not parsed here) so forwardData can verify the session itself.
   const mount = (
     server: ViteDevServer,
     route: string,
     handler: (
       method: string,
       query: Record<string, string>,
-      body: Record<string, unknown> | null
+      body: Record<string, unknown> | null,
+      cookieHeader: string | null
     ) => Promise<{ status: number; body: unknown }>
   ) => {
     server.middlewares.use(route, async (req, res) => {
@@ -44,11 +49,57 @@ function apiDevServer(env: Record<string, string>): Plugin {
         }
       }
 
-      const { status, body: payload } = await handler(req.method || 'GET', query, body);
+      const { status, body: payload } = await handler(
+        req.method || 'GET',
+        query,
+        body,
+        req.headers.cookie || null
+      );
 
       res.statusCode = status;
       res.setHeader('Content-Type', 'application/json');
       res.end(JSON.stringify(payload));
+    });
+  };
+
+  // Functions that need the raw Request (redirects, Set-Cookie,
+  // request.json()) rather than the (method, query, body) shape above.
+  const mountRaw = (
+    server: ViteDevServer,
+    route: string,
+    handler: (request: Request) => Promise<Response>
+  ) => {
+    server.middlewares.use(route, async (req, res) => {
+      const chunks: Buffer[] = [];
+      if (req.method === 'POST') {
+        for await (const chunk of req) chunks.push(chunk as Buffer);
+      }
+
+      const headers = new Headers();
+      for (const [key, value] of Object.entries(req.headers)) {
+        if (typeof value === 'string') headers.set(key, value);
+        else if (Array.isArray(value)) headers.set(key, value.join(', '));
+      }
+
+      const request = new Request(`http://localhost${req.url}`, {
+        method: req.method,
+        headers,
+        body: chunks.length ? Buffer.concat(chunks) : undefined
+      });
+
+      const response = await handler(request);
+
+      res.statusCode = response.status;
+      // Headers.forEach folds multiple Set-Cookie values into one
+      // comma-joined string — wrong for cookies — so use getSetCookie()
+      // (Node 18.14+ / undici) to append each one separately instead.
+      response.headers.forEach((value, key) => {
+        if (key.toLowerCase() !== 'set-cookie') res.setHeader(key, value);
+      });
+      const setCookies = response.headers.getSetCookie?.() ?? [];
+      if (setCookies.length) res.setHeader('Set-Cookie', setCookies);
+
+      res.end(Buffer.from(await response.arrayBuffer()));
     });
   };
 
@@ -61,43 +112,26 @@ function apiDevServer(env: Record<string, string>): Plugin {
         forward(method, query, body, { GAS_URL: env.GAS_URL, GAS_TOKEN: env.GAS_TOKEN })
       );
 
-      mount(server, '/api/data', (method, query, body) =>
-        forwardData(method, query, body, {
-          SUPABASE_URL: env.SUPABASE_URL,
-          SUPABASE_SERVICE_ROLE_KEY: env.SUPABASE_SERVICE_ROLE_KEY
-        })
+      const dataEnv = {
+        SUPABASE_URL: env.SUPABASE_URL,
+        SUPABASE_SERVICE_ROLE_KEY: env.SUPABASE_SERVICE_ROLE_KEY
+      };
+
+      const authEnv = {
+        ...dataEnv,
+        GOOGLE_CLIENT_ID: env.GOOGLE_CLIENT_ID,
+        GOOGLE_CLIENT_SECRET: env.GOOGLE_CLIENT_SECRET,
+        SESSION_SECRET: env.SESSION_SECRET
+      };
+
+      mount(server, '/api/data', (method, query, body, cookieHeader) =>
+        forwardData(method, query, body, cookieHeader, dataEnv)
       );
 
-      server.middlewares.use('/api/submit', async (req, res) => {
-        const chunks: Buffer[] = [];
-        if (req.method === 'POST') {
-          for await (const chunk of req) chunks.push(chunk as Buffer);
-        }
-
-        const headers = new Headers();
-        for (const [key, value] of Object.entries(req.headers)) {
-          if (typeof value === 'string') headers.set(key, value);
-          else if (Array.isArray(value)) headers.set(key, value.join(', '));
-        }
-
-        const request = new Request(`http://localhost${req.url}`, {
-          method: req.method,
-          headers,
-          body: chunks.length ? Buffer.concat(chunks) : undefined
-        });
-
-        const response = await submitOnRequest({
-          request,
-          env: {
-            SUPABASE_URL: env.SUPABASE_URL,
-            SUPABASE_SERVICE_ROLE_KEY: env.SUPABASE_SERVICE_ROLE_KEY
-          }
-        });
-
-        res.statusCode = response.status;
-        response.headers.forEach((value, key) => res.setHeader(key, value));
-        res.end(Buffer.from(await response.arrayBuffer()));
-      });
+      mountRaw(server, '/api/submit', (request) => submitOnRequest({ request, env: dataEnv }));
+      mountRaw(server, '/api/auth/login', (request) => authLoginOnRequest({ request, env: authEnv }));
+      mountRaw(server, '/api/auth/callback', (request) => authCallbackOnRequest({ request, env: authEnv }));
+      mountRaw(server, '/api/auth/logout', (request) => authLogoutOnRequest({ request }));
     }
   };
 }

@@ -18,16 +18,15 @@
  * The service_role key bypasses row level security, which is why it
  * lives here and never reaches the browser — same perimeter the
  * GAS_TOKEN had. Authorisation is enforced below, in requireUser and
- * requireWriteAccess.
+ * requireWriteAccess. requireUser trusts the signed session cookie set
+ * by functions/api/auth/callback.ts, not anything the client sends —
+ * see lib/auth.ts for the Google OAuth login flow.
  *
  * `forward` is exported so vite.config.ts can serve an identical
  * /api/data locally without a second copy of the logic.
  */
 
-export interface Env {
-  SUPABASE_URL?: string;
-  SUPABASE_SERVICE_ROLE_KEY?: string;
-}
+import { Env, SessionUser as User, lookupUser, verifySession } from '../../lib/auth';
 
 const READ_ACTIONS = [
   'bootstrap',
@@ -39,7 +38,6 @@ const READ_ACTIONS = [
 ];
 
 const WRITE_ACTIONS = [
-  'login',
   'updateStage',
   'addNote',
   'updateTags',
@@ -52,13 +50,6 @@ const WRITE_ACTIONS = [
 export interface ForwardResult {
   status: number;
   body: unknown;
-}
-
-interface User {
-  email: string;
-  name: string;
-  role: string;
-  canEdit: boolean;
 }
 
 type Settings = Record<string, string[]>;
@@ -185,28 +176,21 @@ const isDecidedStage = (stage: unknown) => /hired|rejected/i.test(String(stage ?
 
 // ── auth ────────────────────────────────────────────────
 
-async function requireUser(env: Env, email: unknown): Promise<User> {
-  if (!email) throw new Error('Missing user email');
+/**
+ * Identifies the caller from the signed session cookie set by
+ * functions/api/auth/callback.ts after Google sign-in — the client can
+ * no longer just claim an email in the request body/query. lookupUser
+ * still enforces the Supabase `users` table as the authorization
+ * allowlist, exactly as before.
+ */
+async function requireUser(env: Env, cookieHeader: string | null): Promise<User> {
+  const email = await verifySession(cookieHeader, env);
+  if (!email) throw new Error('Not signed in');
 
-  // ilike with no wildcards is an exact, case-insensitive match.
-  const rows = await select<Record<string, unknown>>(
-    env,
-    'users',
-    `select=email,name,role,active&email=ilike.${enc(String(email))}&limit=1`
-  );
+  const user = await lookupUser(env, email);
+  if (!user) throw new Error(`User not registered or inactive: ${email}`);
 
-  const match = rows[0];
-  if (!match) throw new Error(`User not registered: ${email}`);
-  if (!match.active) throw new Error(`User account is inactive: ${email}`);
-
-  const role = String(match.role || 'Viewer');
-
-  return {
-    email: String(match.email),
-    name: String(match.name || match.email),
-    role,
-    canEdit: role.trim().toLowerCase() !== 'viewer'
-  };
+  return user;
 }
 
 /**
@@ -760,6 +744,7 @@ export async function forward(
   method: string,
   query: Record<string, string | string[] | undefined>,
   body: Record<string, unknown> | null,
+  cookieHeader: string | null,
   env: Env
 ): Promise<ForwardResult> {
   if (!env.SUPABASE_URL || !env.SUPABASE_SERVICE_ROLE_KEY) {
@@ -783,7 +768,7 @@ export async function forward(
         return { status: 400, body: { result: 'error', message: `Unsupported action: ${action}` } };
       }
 
-      const user = await requireUser(env, one(query.user));
+      const user = await requireUser(env, cookieHeader);
 
       switch (action) {
         case 'bootstrap':
@@ -812,11 +797,9 @@ export async function forward(
         return { status: 400, body: { result: 'error', message: `Unsupported action: ${action}` } };
       }
 
-      const user = await requireUser(env, payload.user);
+      const user = await requireUser(env, cookieHeader);
 
       switch (action) {
-        case 'login':
-          return { status: 200, body: { result: 'success', user, settings: await loadSettings(env) } };
         case 'updateStage':
           return { status: 200, body: await apiUpdateStage(env, user, payload) };
         case 'addNote':
@@ -864,7 +847,13 @@ export async function onRequest(context: { request: Request; env: Env }): Promis
     }
   }
 
-  const { status, body: payload } = await forward(request.method, query, body, env);
+  const { status, body: payload } = await forward(
+    request.method,
+    query,
+    body,
+    request.headers.get('Cookie'),
+    env
+  );
 
   return new Response(JSON.stringify(payload), {
     status,

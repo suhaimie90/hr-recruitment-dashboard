@@ -18,18 +18,15 @@ import {
  * The previous backend is still deployed at /api/gas (Apps Script via
  * a token proxy). Rolling back is this one line, which is why it was
  * left in place rather than deleted.
+ *
+ * Identity travels via the HttpOnly session cookie Google sign-in sets
+ * (see functions/api/auth/), not anything sent from here — same-origin
+ * fetches include it automatically, and JS can't read or forge it.
  */
 const ENDPOINT = '/api/data';
 
-/** The signed-in user's email travels with every call for the audit trail. */
-let currentUserEmail = '';
-
-export function setCurrentUser(email: string) {
-  currentUserEmail = email;
-}
-
 async function get<T>(action: string, params: Record<string, string> = {}): Promise<T> {
-  const query = new URLSearchParams({ action, user: currentUserEmail, ...params });
+  const query = new URLSearchParams({ action, ...params });
 
   const res = await fetch(`${ENDPOINT}?${query.toString()}`);
   const json = await res.json();
@@ -45,7 +42,7 @@ async function post<T>(action: string, payload: Record<string, unknown> = {}): P
   const res = await fetch(ENDPOINT, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ action, user: currentUserEmail, ...payload })
+    body: JSON.stringify({ action, ...payload })
   });
 
   const json = await res.json();
@@ -57,23 +54,14 @@ async function post<T>(action: string, payload: Record<string, unknown> = {}): P
   return json as T;
 }
 
-/**
- * Validates an email against the Users sheet and returns the account's
- * name and role. Rejects unknown or inactive users.
- */
-export async function login(email: string): Promise<{ user: AppUser; settings: Settings }> {
-  setCurrentUser(email);
-
-  try {
-    return await post<{ user: AppUser; settings: Settings }>('login');
-  } catch (err) {
-    setCurrentUser('');
-    throw err;
-  }
-}
-
+/** Checks the session cookie and returns the signed-in account, or throws. */
 export async function fetchBootstrap(): Promise<{ user: AppUser; settings: Settings }> {
   return get<{ user: AppUser; settings: Settings }>('bootstrap');
+}
+
+/** Clears the session cookie server-side. */
+export async function logout(): Promise<void> {
+  await fetch('/api/auth/logout', { method: 'POST' });
 }
 
 export interface ApplicationsResult {

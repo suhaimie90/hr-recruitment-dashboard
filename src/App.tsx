@@ -18,8 +18,8 @@ const AnalyticsView = lazy(() =>
 );
 
 import {
-  login,
-  setCurrentUser,
+  fetchBootstrap,
+  logout,
   fetchApplications,
   fetchInterviews,
   updateStage,
@@ -41,7 +41,11 @@ import {
 
 import { computeAnalytics, filterApplications } from './lib/derive';
 
-const SESSION_KEY = 'talentflow.user';
+/** Matches the "?error=" values functions/api/auth/callback.ts redirects with. */
+const OAUTH_ERROR_MESSAGES: Record<string, string> = {
+  unauthorized_user: 'That Google account is not registered here. Contact MIS for access.',
+  oauth_failed: 'Google sign-in did not complete. Please try again.'
+};
 
 export default function App() {
   // Session
@@ -97,49 +101,36 @@ export default function App() {
   const canEdit = user?.canEdit ?? (user?.role ?? '').toLowerCase() !== 'viewer';
 
   // ── Session restore ─────────────────────────────────────
+  // Identity lives in the HttpOnly cookie Google sign-in set (see
+  // functions/api/auth/callback.ts) — nothing to read client-side,
+  // just ask the server whether that cookie is still valid.
   useEffect(() => {
-    const saved = localStorage.getItem(SESSION_KEY);
+    const params = new URLSearchParams(window.location.search);
+    const oauthError = params.get('error');
 
-    if (!saved) {
-      setIsRestoringSession(false);
-      return;
+    if (oauthError) {
+      setLoginError(OAUTH_ERROR_MESSAGES[oauthError] || 'Sign in failed.');
+      window.history.replaceState(null, '', window.location.pathname);
     }
 
-    try {
-      const parsed = JSON.parse(saved) as AppUser;
-      setCurrentUser(parsed.email);
-      // Re-validate against the Users sheet — the account may have been
-      // deactivated since the session was stored.
-      login(parsed.email)
-        .then(({ user: verified, settings: fetched }) => {
-          setUser(verified);
-          setSettings(fetched);
-        })
-        .catch(() => localStorage.removeItem(SESSION_KEY))
-        .finally(() => setIsRestoringSession(false));
-    } catch {
-      localStorage.removeItem(SESSION_KEY);
-      setIsRestoringSession(false);
-    }
+    fetchBootstrap()
+      .then(({ user: verified, settings: fetched }) => {
+        setUser(verified);
+        setSettings(fetched);
+      })
+      .catch(() => {
+        // No valid session — LoginScreen shows next, which is fine.
+      })
+      .finally(() => setIsRestoringSession(false));
   }, []);
 
-  const handleLogin = async (email: string) => {
-    setLoginError(null);
+  const handleLogout = async () => {
     try {
-      const { user: verified, settings: fetched } = await login(email);
-      setUser(verified);
-      setSettings(fetched);
-      localStorage.setItem(SESSION_KEY, JSON.stringify(verified));
-    } catch (err) {
-      setLoginError(err instanceof Error ? err.message : 'Sign in failed');
+      await logout();
+    } finally {
+      setUser(null);
+      setApplications([]);
     }
-  };
-
-  const handleLogout = () => {
-    localStorage.removeItem(SESSION_KEY);
-    setCurrentUser('');
-    setUser(null);
-    setApplications([]);
   };
 
   // ── Data loading ────────────────────────────────────────
@@ -306,7 +297,7 @@ export default function App() {
   }
 
   if (!user) {
-    return <LoginScreen onLogin={handleLogin} error={loginError} />;
+    return <LoginScreen error={loginError} />;
   }
 
   return (
