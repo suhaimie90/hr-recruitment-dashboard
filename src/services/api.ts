@@ -11,11 +11,15 @@ import {
 } from '../types';
 
 /**
- * All traffic goes through /api/gas, the Vercel serverless proxy that
- * injects the Apps Script token. Nothing here knows the token, and
- * nothing here talks to script.google.com directly.
+ * All traffic goes through /api/data, the Cloudflare Pages Function
+ * backed by Supabase. Nothing here holds a key, and nothing here talks
+ * to the database directly — the service_role key stays server-side.
+ *
+ * The previous backend is still deployed at /api/gas (Apps Script via
+ * a token proxy). Rolling back is this one line, which is why it was
+ * left in place rather than deleted.
  */
-const ENDPOINT = '/api/gas';
+const ENDPOINT = '/api/data';
 
 /** The signed-in user's email travels with every call for the audit trail. */
 let currentUserEmail = '';
