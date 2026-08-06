@@ -6,6 +6,10 @@ import { defineConfig, loadEnv, type Plugin, type ViteDevServer } from 'vite';
 // and production can't drift.
 import { forward } from './functions/api/gas';
 import { forward as forwardData } from './functions/api/data';
+// submit.ts exports onRequest directly rather than a forward() — it
+// needs the raw Request (for request.json()), which doesn't fit the
+// (method, query, body) shape the other two functions use.
+import { onRequest as submitOnRequest } from './functions/api/submit';
 
 /**
  * Vercel serverless functions don't run under `vite dev`, so this
@@ -63,6 +67,37 @@ function apiDevServer(env: Record<string, string>): Plugin {
           SUPABASE_SERVICE_ROLE_KEY: env.SUPABASE_SERVICE_ROLE_KEY
         })
       );
+
+      server.middlewares.use('/api/submit', async (req, res) => {
+        const chunks: Buffer[] = [];
+        if (req.method === 'POST') {
+          for await (const chunk of req) chunks.push(chunk as Buffer);
+        }
+
+        const headers = new Headers();
+        for (const [key, value] of Object.entries(req.headers)) {
+          if (typeof value === 'string') headers.set(key, value);
+          else if (Array.isArray(value)) headers.set(key, value.join(', '));
+        }
+
+        const request = new Request(`http://localhost${req.url}`, {
+          method: req.method,
+          headers,
+          body: chunks.length ? Buffer.concat(chunks) : undefined
+        });
+
+        const response = await submitOnRequest({
+          request,
+          env: {
+            SUPABASE_URL: env.SUPABASE_URL,
+            SUPABASE_SERVICE_ROLE_KEY: env.SUPABASE_SERVICE_ROLE_KEY
+          }
+        });
+
+        res.statusCode = response.status;
+        response.headers.forEach((value, key) => res.setHeader(key, value));
+        res.end(Buffer.from(await response.arrayBuffer()));
+      });
     }
   };
 }

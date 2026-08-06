@@ -212,3 +212,18 @@ alter table audit_log    enable row level security;
 alter table settings     enable row level security;
 alter table interviews   enable row level security;
 alter table assessments  enable row level security;
+
+
+-- =====================================================
+-- RESUME STORAGE
+-- =====================================================
+-- Private bucket — public = false means no anonymous read, even with
+-- the direct object URL. functions/api/submit.ts uploads with the
+-- service_role key (bypasses RLS same as the tables above), and
+-- functions/api/data.ts generates a short-lived signed URL each time
+-- the applicant drawer actually opens a resume, rather than storing a
+-- link that would go dead when it expires.
+
+insert into storage.buckets (id, name, public)
+values ('resumes', 'resumes', false)
+on conflict (id) do nothing;

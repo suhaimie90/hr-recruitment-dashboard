@@ -117,6 +117,46 @@ const update = <T>(env: Env, table: string, query: string, patch: unknown) =>
     headers: { Prefer: 'return=representation' }
   });
 
+/**
+ * Resumes uploaded through functions/api/submit.ts are stored in a
+ * private bucket by object path, not a public URL — a stored signed
+ * URL would go dead when it expires, so a fresh one is minted here,
+ * on the one read that actually needs it (the applicant drawer).
+ *
+ * Rows migrated from the old Google Sheet still hold a real Drive
+ * URL in this column (already a working link), so those pass through
+ * unchanged rather than being run through Storage at all.
+ */
+async function resolveResumeUrl(env: Env, stored: string | null | undefined): Promise<string> {
+  if (!stored) return '';
+  if (/^https?:\/\//i.test(stored)) return stored;
+
+  try {
+    // Storage lives under /storage/v1/, not /rest/v1/ — a separate
+    // call from sb() above, which is hardcoded to the PostgREST path.
+    const res = await fetch(`${env.SUPABASE_URL}/storage/v1/object/sign/resumes/${enc(stored)}`, {
+      method: 'POST',
+      headers: {
+        apikey: env.SUPABASE_SERVICE_ROLE_KEY as string,
+        Authorization: `Bearer ${env.SUPABASE_SERVICE_ROLE_KEY}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({ expiresIn: 3600 })
+    });
+
+    if (!res.ok) {
+      console.error('resolveResumeUrl: sign failed', res.status, (await res.text()).slice(0, 200));
+      return '';
+    }
+
+    const signed = (await res.json()) as { signedURL?: string };
+    return signed.signedURL ? `${env.SUPABASE_URL}/storage/v1${signed.signedURL}` : '';
+  } catch (err) {
+    console.error('resolveResumeUrl failed:', err);
+    return '';
+  }
+}
+
 // ── helpers ─────────────────────────────────────────────
 
 /**
@@ -234,6 +274,12 @@ function toListRow(r: Row) {
     availableDate: r.available_date || '',
     expectedSalary: r.expected_salary || '',
     experience: r.experience || '',
+    // Unresolved here on purpose — see resolveResumeUrl. Migrated rows
+    // still hold a working Drive link, so this is fine as-is for them.
+    // New Storage-backed resumes only get a real, signed link when
+    // apiApplication runs (the drawer), same trimming the list already
+    // does for IC number, address, etc. Minting a signed URL for every
+    // row in a 400+ list on every load would be wasteful.
     resumeUrl: r.resume_url || '',
     preferredState: r.preferred_state || '',
     preferredBranch: r.preferred_branch || '',
@@ -371,11 +417,13 @@ async function apiApplications(env: Env, includeArchived: boolean) {
 
 async function apiApplication(env: Env, applicationId: unknown) {
   const r = await getApplication(env, applicationId);
+  const resumeUrl = await resolveResumeUrl(env, r.resume_url);
 
   return {
     result: 'success',
     data: {
       ...toListRow(r),
+      resumeUrl,
       icNumber: r.ic_number || '',
       address: r.address || '',
       postcode: r.postcode || '',
