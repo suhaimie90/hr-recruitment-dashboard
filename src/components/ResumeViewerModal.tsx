@@ -7,16 +7,12 @@ interface ResumeViewerModalProps {
   onClose: () => void;
 }
 
-/** Google Drive file URLs -> the embeddable preview endpoint. */
-function toPreviewUrl(url: string): string | null {
-  const match = url.match(/\/d\/([a-zA-Z0-9_-]+)/) || url.match(/[?&]id=([a-zA-Z0-9_-]+)/);
-  return match ? `https://drive.google.com/file/d/${match[1]}/preview` : null;
-}
+
 
 export const ResumeViewerModal: React.FC<ResumeViewerModalProps> = ({ application, onClose }) => {
   if (!application) return null;
 
-  const previewUrl = toPreviewUrl(application.resumeUrl);
+   const previewUrl = application.resumeUrl;
 
   return (
     <div className="fixed inset-0 z-[60] bg-slate-900/70 backdrop-blur-xs flex items-center justify-center p-4">
@@ -39,7 +35,7 @@ export const ResumeViewerModal: React.FC<ResumeViewerModalProps> = ({ applicatio
               className="flex items-center gap-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold px-3 py-1.5 rounded-lg transition-colors"
             >
               <ExternalLink className="w-3.5 h-3.5" />
-              <span className="hidden sm:inline">Open in Drive</span>
+              <span className="hidden sm:inline">Open Resume</span>
             </a>
             <button
               onClick={onClose}
@@ -68,14 +64,14 @@ export const ResumeViewerModal: React.FC<ResumeViewerModalProps> = ({ applicatio
                 rel="noreferrer"
                 className="text-xs font-semibold text-indigo-600 hover:underline"
               >
-                Open it in Google Drive instead →
+                Open Resume →
               </a>
             </div>
           )}
         </div>
 
         <div className="px-6 py-2.5 bg-slate-50 border-t border-slate-200 text-[11px] text-slate-500 shrink-0">
-          Preview requires Drive access. If it stays blank, confirm the file's sharing permissions.
+          Preview requires a valid resume link. If it stays blank, confirm the file exists in storage.
         </div>
       </div>
     </div>
