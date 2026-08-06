@@ -44,6 +44,7 @@ const WRITE_ACTIONS = [
   'scheduleInterview',
   'saveAssessment',
   'cancelInterview',
+  'removeInterview',
   'archiveApplication'
 ];
 
@@ -107,6 +108,9 @@ const update = <T>(env: Env, table: string, query: string, patch: unknown) =>
     body: JSON.stringify(patch),
     headers: { Prefer: 'return=representation' }
   });
+
+const remove = (env: Env, table: string, query: string) =>
+  sb<null>(env, `${table}?${query}`, { method: 'DELETE' });
 
 /**
  * Resumes uploaded through functions/api/submit.ts are stored in a
@@ -193,12 +197,7 @@ async function requireUser(env: Env, cookieHeader: string | null): Promise<User>
   return user;
 }
 
-/**
- * Viewers read everything and change nothing. Branch-level scoping is
- * deliberately not enforced here — users.allowed_branches exists in the
- * schema but nothing reads it yet, and quietly half-applying it would
- * be worse than not applying it at all.
- */
+/** Viewers can read their assigned scope but cannot change anything. */
 function requireWriteAccess(user: User): User {
   if (!user.canEdit) throw new Error(`Your role (${user.role}) is read-only`);
   return user;
@@ -358,11 +357,61 @@ async function getApplication(env: Env, applicationId: unknown, columns = '*'): 
   return rows[0];
 }
 
+const scopeValue = (value: unknown) => String(value ?? '').trim().toLowerCase();
+
+function hasAssignment(value: unknown, assignments: string[], partial = false): boolean {
+  const normalized = scopeValue(value);
+  const rules = assignments.map(scopeValue).filter(Boolean);
+  if (rules.includes('all')) return true;
+  if (!normalized || !rules.length) return false;
+  return rules.some((rule) => (partial ? normalized.includes(rule) : normalized === rule));
+}
+
+function positionWithinRoleLevel(role: string, position: unknown): boolean {
+  const normalizedRole = scopeValue(role);
+  const normalizedPosition = scopeValue(position);
+  if (normalizedRole === 'supervisor') return !/supervisor|manager/.test(normalizedPosition);
+  if (normalizedRole === 'area manager' || normalizedRole === 'manager') {
+    return !/manager/.test(normalizedPosition);
+  }
+  return true;
+}
+
+/** Senior Manager and Admin are global; other roles match branch AND position. */
+function canAccessApplication(user: User, row: Row): boolean {
+  const role = scopeValue(user.role);
+  if (role === 'admin' || role === 'senior manager') return true;
+  return (
+    positionWithinRoleLevel(user.role, row.position) &&
+    hasAssignment(row.preferred_branch, user.allowedBranches) &&
+    hasAssignment(row.position, user.allowedPositions, true)
+  );
+}
+
+function requireApplicationAccess(user: User, row: Row): Row {
+  if (!canAccessApplication(user, row)) {
+    throw new Error('You do not have access to this application');
+  }
+  return row;
+}
+
+async function getScopedApplication(
+  env: Env,
+  user: User,
+  applicationId: unknown,
+  columns = '*'
+): Promise<Row> {
+  // Scope fields are always fetched for authorization, even when the
+  // caller only needs one write-related column.
+  const requested = columns === '*' ? '*' : `${columns},preferred_branch,position`;
+  return requireApplicationAccess(user, await getApplication(env, applicationId, requested));
+}
+
 const touch = () => ({ last_activity: nowIso() });
 
 // ── read actions ────────────────────────────────────────
 
-async function apiApplications(env: Env, includeArchived: boolean) {
+async function apiApplications(env: Env, user: User, includeArchived: boolean) {
   const settings = await loadSettings(env);
 
   const all = await select<Row>(
@@ -378,13 +427,16 @@ async function apiApplications(env: Env, includeArchived: boolean) {
   const decidedCutoff = Date.now() - archiveAfterDays * day;
   const staleCutoff = staleAfterDays > 0 ? Date.now() - staleAfterDays * day : null;
 
-  let rows = all;
+  // Scope before every other filter so out-of-scope rows never reach
+  // the browser and do not affect archived counts.
+  const scoped = all.filter((row) => canAccessApplication(user, row));
+  let rows = scoped;
   let archivedCount = 0;
 
   // Filtering HERE is what shrinks the response. Hiding these in the
   // browser would still ship every archived row over the wire.
   if (!includeArchived) {
-    rows = all.filter((r) => {
+    rows = scoped.filter((r) => {
       const hide = isArchived(r, decidedCutoff, staleCutoff);
       if (hide) archivedCount++;
       return !hide;
@@ -399,8 +451,8 @@ async function apiApplications(env: Env, includeArchived: boolean) {
   };
 }
 
-async function apiApplication(env: Env, applicationId: unknown) {
-  const r = await getApplication(env, applicationId);
+async function apiApplication(env: Env, user: User, applicationId: unknown) {
+  const r = await getScopedApplication(env, user, applicationId);
   const resumeUrl = await resolveResumeUrl(env, r.resume_url);
 
   return {
@@ -418,8 +470,9 @@ async function apiApplication(env: Env, applicationId: unknown) {
   };
 }
 
-async function apiActivity(env: Env, applicationId: unknown) {
+async function apiActivity(env: Env, user: User, applicationId: unknown) {
   if (!applicationId) throw new Error('Missing applicationId');
+  await getScopedApplication(env, user, applicationId, 'application_id');
   const id = enc(String(applicationId));
 
   const [audit, interviews] = await Promise.all([
@@ -446,13 +499,23 @@ async function apiActivity(env: Env, applicationId: unknown) {
   };
 }
 
-async function apiInterviews(env: Env) {
-  const rows = await select<Row>(env, 'interviews', 'select=*&order=scheduled_at.desc&limit=2000');
-  return { result: 'success', data: rows.map(toInterview) };
+async function apiInterviews(env: Env, user: User) {
+  const [rows, applications] = await Promise.all([
+    select<Row>(env, 'interviews', 'select=*&order=scheduled_at.desc&limit=2000'),
+    select<Row>(env, 'applications', 'select=application_id,preferred_branch,position&limit=5000')
+  ]);
+  const accessibleIds = new Set(
+    applications.filter((row) => canAccessApplication(user, row)).map((row) => String(row.application_id))
+  );
+  return {
+    result: 'success',
+    data: rows.filter((row) => accessibleIds.has(String(row.application_id))).map(toInterview)
+  };
 }
 
-async function apiAssessments(env: Env, applicationId: unknown) {
+async function apiAssessments(env: Env, user: User, applicationId: unknown) {
   if (!applicationId) throw new Error('Missing applicationId');
+  await getScopedApplication(env, user, applicationId, 'application_id');
 
   const rows = await select<Row>(
     env,
@@ -507,7 +570,7 @@ async function apiUpdateStage(env: Env, user: User, payload: Row) {
 
   if (valid.length && !valid.includes(stage)) throw new Error(`Unknown stage: ${stage}`);
 
-  const row = await getApplication(env, applicationId, 'application_id,stage');
+  const row = await getScopedApplication(env, user, applicationId, 'application_id,stage');
   const previous = row.stage || 'Applied';
 
   // Returning early keeps a retried request — after a response was lost
@@ -548,7 +611,7 @@ async function apiAddNote(env: Env, user: User, payload: Row) {
 
   // Checked up front: audit_log.application_id is a real foreign key
   // now, so writing the note first would fail on a bad id anyway.
-  await getApplication(env, applicationId, 'application_id');
+  await getScopedApplication(env, user, applicationId, 'application_id');
 
   const remarks = payload.tag ? `[${sanitize(payload.tag)}] ${content}` : content;
   await writeAudit(env, user, 'NOTE', String(applicationId), remarks);
@@ -575,7 +638,7 @@ async function apiUpdateTags(env: Env, user: User, payload: Row) {
     .map(sanitize)
     .filter(Boolean);
 
-  await getApplication(env, applicationId, 'application_id');
+  await getScopedApplication(env, user, applicationId, 'application_id');
 
   await update(env, 'applications', `application_id=eq.${enc(String(applicationId))}`, {
     tags,
@@ -593,7 +656,7 @@ async function apiArchiveApplication(env: Env, user: User, payload: Row) {
   const applicationId = payload.applicationId;
   if (!applicationId) throw new Error('applicationId is required');
 
-  const row = await getApplication(env, applicationId, 'application_id,archived_at');
+  const row = await getScopedApplication(env, user, applicationId, 'application_id,archived_at');
   const restore = payload.restore === true;
   const currentlyArchived = Boolean(row.archived_at);
 
@@ -624,7 +687,7 @@ async function apiScheduleInterview(env: Env, user: User, payload: Row) {
     throw new Error('applicationId and scheduledAt are required');
   }
 
-  await getApplication(env, applicationId, 'application_id');
+  await getScopedApplication(env, user, applicationId, 'application_id');
 
   await insert(env, 'interviews', {
     application_id: applicationId,
@@ -661,6 +724,7 @@ async function apiCancelInterview(env: Env, user: User, payload: Row) {
   const rowNumber = Number(payload.rowNumber);
 
   if (!applicationId || !rowNumber) throw new Error('applicationId and rowNumber are required');
+  await getScopedApplication(env, user, applicationId, 'application_id');
 
   const rows = await select<Row>(
     env,
@@ -695,6 +759,38 @@ async function apiCancelInterview(env: Env, user: User, payload: Row) {
   return { result: 'success', applicationId };
 }
 
+async function apiRemoveInterview(env: Env, user: User, payload: Row) {
+  requireWriteAccess(user);
+
+  const applicationId = payload.applicationId;
+  const rowNumber = Number(payload.rowNumber);
+  if (!applicationId || !rowNumber) throw new Error('applicationId and rowNumber are required');
+  await getScopedApplication(env, user, applicationId, 'application_id');
+
+  const rows = await select<Row>(
+    env,
+    'interviews',
+    `select=id,application_id,title&id=eq.${rowNumber}&limit=1`
+  );
+  const interview = rows[0];
+  if (!interview) throw new Error('That interview no longer exists — refresh and try again');
+  if (String(interview.application_id) !== String(applicationId)) {
+    throw new Error('The interview list is out of date — refresh the page and try again');
+  }
+
+  await remove(env, 'interviews', `id=eq.${rowNumber}`);
+  await update(env, 'applications', `application_id=eq.${enc(String(applicationId))}`, touch());
+  await writeAudit(
+    env,
+    user,
+    'INTERVIEW_REMOVED',
+    String(applicationId),
+    String(interview.title || 'Interview')
+  );
+
+  return { result: 'success', applicationId };
+}
+
 async function apiSaveAssessment(env: Env, user: User, payload: Row) {
   requireWriteAccess(user);
 
@@ -705,7 +801,7 @@ async function apiSaveAssessment(env: Env, user: User, payload: Row) {
     throw new Error('applicationId and at least one criterion are required');
   }
 
-  await getApplication(env, applicationId, 'application_id');
+  await getScopedApplication(env, user, applicationId, 'application_id');
 
   // One timestamp for the whole scorecard — it is what groups these
   // rows back together on read.
@@ -776,16 +872,16 @@ export async function forward(
         case 'applications': {
           const raw = String(one(query.includeArchived) || '');
           const include = /^(1|true|yes)$/i.test(raw);
-          return { status: 200, body: await apiApplications(env, include) };
+          return { status: 200, body: await apiApplications(env, user, include) };
         }
         case 'application':
-          return { status: 200, body: await apiApplication(env, one(query.applicationId)) };
+          return { status: 200, body: await apiApplication(env, user, one(query.applicationId)) };
         case 'activity':
-          return { status: 200, body: await apiActivity(env, one(query.applicationId)) };
+          return { status: 200, body: await apiActivity(env, user, one(query.applicationId)) };
         case 'interviews':
-          return { status: 200, body: await apiInterviews(env) };
+          return { status: 200, body: await apiInterviews(env, user) };
         case 'assessments':
-          return { status: 200, body: await apiAssessments(env, one(query.applicationId)) };
+          return { status: 200, body: await apiAssessments(env, user, one(query.applicationId)) };
       }
     }
 
@@ -812,6 +908,8 @@ export async function forward(
           return { status: 200, body: await apiSaveAssessment(env, user, payload) };
         case 'cancelInterview':
           return { status: 200, body: await apiCancelInterview(env, user, payload) };
+        case 'removeInterview':
+          return { status: 200, body: await apiRemoveInterview(env, user, payload) };
         case 'archiveApplication':
           return { status: 200, body: await apiArchiveApplication(env, user, payload) };
       }

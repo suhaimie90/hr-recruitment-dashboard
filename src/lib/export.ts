@@ -46,58 +46,89 @@ export function downloadCsv(filename: string, rows: Cell[][]) {
  * Note: Recharts renders legends as HTML, not SVG, so a legend won't
  * appear in the exported image. The plot itself does.
  */
-export function downloadChartAsPng(container: HTMLElement, filename: string): Promise<void> {
+function svgImage(svg: SVGElement): Promise<HTMLImageElement> {
+  const clone = svg.cloneNode(true) as SVGElement;
+  const rect = svg.getBoundingClientRect();
+  clone.setAttribute('width', String(Math.ceil(rect.width) || 640));
+  clone.setAttribute('height', String(Math.ceil(rect.height) || 320));
+  clone.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
+
+  const source = new XMLSerializer().serializeToString(clone);
+  const image = new Image();
+
   return new Promise((resolve, reject) => {
-    const svg = container.querySelector('svg');
-    if (!svg) {
-      reject(new Error('No chart found to export'));
-      return;
-    }
+    image.onload = () => resolve(image);
+    image.onerror = () => reject(new Error('Could not rasterise a chart'));
+    image.src = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(source)}`;
+  });
+}
 
-    const rect = svg.getBoundingClientRect();
-    const width = Math.ceil(rect.width) || 640;
-    const height = Math.ceil(rect.height) || 320;
-    const scale = 2;
+/** Combines every marked analytics panel into one report-ready PNG. */
+export async function downloadDashboardAsPng(container: HTMLElement, filename: string): Promise<void> {
+  const panels = Array.from(container.querySelectorAll<HTMLElement>('[data-chart-panel]'));
+  if (!panels.length) throw new Error('No charts found to export');
 
-    // Clone so the explicit size doesn't disturb the live chart.
-    const clone = svg.cloneNode(true) as SVGElement;
-    clone.setAttribute('width', String(width));
-    clone.setAttribute('height', String(height));
-    clone.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
+  const columns = panels.length > 1 ? 2 : 1;
+  const rows = Math.ceil(panels.length / columns);
+  const panelWidth = 760;
+  const panelHeight = 390;
+  const gap = 24;
+  const outer = 32;
+  const heading = 72;
+  const scale = 2;
+  const width = outer * 2 + columns * panelWidth + (columns - 1) * gap;
+  const height = outer * 2 + heading + rows * panelHeight + (rows - 1) * gap;
 
-    const xml = new XMLSerializer().serializeToString(clone);
-    const svgUrl = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(xml)}`;
+  const canvas = document.createElement('canvas');
+  canvas.width = width * scale;
+  canvas.height = height * scale;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) throw new Error('Canvas unavailable');
+  ctx.scale(scale, scale);
+  ctx.fillStyle = '#f1f5f9';
+  ctx.fillRect(0, 0, width, height);
 
-    const img = new Image();
+  ctx.fillStyle = '#0f172a';
+  ctx.font = '700 26px Arial, sans-serif';
+  ctx.fillText('SETIAHUB Recruitment Analytics', outer, outer + 26);
+  ctx.fillStyle = '#64748b';
+  ctx.font = '13px Arial, sans-serif';
+  ctx.fillText(`Generated ${new Date().toLocaleString()}`, outer, outer + 50);
 
-    img.onload = () => {
-      const canvas = document.createElement('canvas');
-      canvas.width = width * scale;
-      canvas.height = height * scale;
-
-      const ctx = canvas.getContext('2d');
-      if (!ctx) {
-        reject(new Error('Canvas unavailable'));
-        return;
-      }
+  await Promise.all(
+    panels.map(async (panel, index) => {
+      const svg = panel.querySelector('svg');
+      if (!svg) return;
+      const image = await svgImage(svg);
+      const column = index % columns;
+      const row = Math.floor(index / columns);
+      const x = outer + column * (panelWidth + gap);
+      const y = outer + heading + row * (panelHeight + gap);
 
       ctx.fillStyle = '#ffffff';
-      ctx.fillRect(0, 0, canvas.width, canvas.height);
-      ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+      ctx.strokeStyle = '#cbd5e1';
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.roundRect(x, y, panelWidth, panelHeight, 12);
+      ctx.fill();
+      ctx.stroke();
 
-      canvas.toBlob((blob) => {
-        if (!blob) {
-          reject(new Error('Could not render the chart'));
-          return;
-        }
-        triggerDownload(blob, filename);
-        resolve();
-      }, 'image/png');
-    };
+      ctx.fillStyle = '#0f172a';
+      ctx.font = '700 15px Arial, sans-serif';
+      ctx.fillText(panel.dataset.title || 'Chart', x + 20, y + 28);
+      ctx.fillStyle = '#94a3b8';
+      ctx.font = '12px Arial, sans-serif';
+      const subtitle = panel.dataset.subtitle || '';
+      const subtitleWidth = ctx.measureText(subtitle).width;
+      ctx.fillText(subtitle, x + panelWidth - subtitleWidth - 20, y + 28);
 
-    img.onerror = () => reject(new Error('Could not rasterise the chart'));
-    img.src = svgUrl;
-  });
+      ctx.drawImage(image, x + 14, y + 46, panelWidth - 28, panelHeight - 60);
+    })
+  );
+
+  const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, 'image/png'));
+  if (!blob) throw new Error('Could not render the dashboard');
+  triggerDownload(blob, filename);
 }
 
 /** YYYY-MM-DD for filenames, so exports sort chronologically. */

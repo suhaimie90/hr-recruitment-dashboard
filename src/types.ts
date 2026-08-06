@@ -90,6 +90,9 @@ export interface AppUser {
   name: string;
   role: string;
   canEdit?: boolean;
+  canViewAnalytics?: boolean;
+  allowedBranches?: string[];
+  allowedPositions?: string[];
 }
 
 /** Settings sheet grouped by Category, ordered by Sort, inactive dropped. */

@@ -22,12 +22,13 @@ export const Sidebar: React.FC<SidebarProps> = ({
   totalApplicants,
   interviewCount
 }) => {
+  const canViewAnalytics = user.canViewAnalytics ?? /admin|manager/i.test(user.role);
   const navItems = [
     { id: 'pipeline', label: 'Pipeline Board', icon: Kanban, badge: totalApplicants },
     { id: 'candidates', label: 'All Applicants', icon: Users, badge: null },
     { id: 'interviews', label: 'Interview Schedule', icon: Calendar, badge: interviewCount || null },
     { id: 'analytics', label: 'Recruitment Analytics', icon: BarChart3, badge: null }
-  ];
+  ].filter((item) => item.id !== 'analytics' || canViewAnalytics);
 
   const isViewer = user.role.toLowerCase() === 'viewer';
 

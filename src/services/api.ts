@@ -145,6 +145,11 @@ export async function cancelInterview(
   await post('cancelInterview', { applicationId, rowNumber, reason });
 }
 
+/** Permanently deletes an interview row after a separate confirmation in the UI. */
+export async function removeInterview(applicationId: string, rowNumber: number): Promise<void> {
+  await post('removeInterview', { applicationId, rowNumber });
+}
+
 export async function updateStage(
   applicationId: string,
   stage: ApplicationStage,

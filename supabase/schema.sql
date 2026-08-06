@@ -98,18 +98,15 @@ create index idx_applications_submitted_at on applications (submitted_at);
 -- =====================================================
 -- USERS
 -- =====================================================
--- allowed_branches is added now so the column doesn't require a
--- second migration later — role-scoping enforcement itself is a
--- separate, later task. NULL/empty means "all branches" (current
--- behavior — role scoping was previously removed as over-engineering,
--- so the default must stay permissive until that logic actually
--- exists in the API layer).
+-- Admin and Senior Manager are global by role. For Area Manager,
+-- Supervisor and Viewer, NULL/empty assignments mean no access.
 
 create table users (
   email             text primary key,
   name              text not null,
   role              text not null default 'Viewer',
   allowed_branches  text[],
+  allowed_positions text[],
   active            boolean not null default true
 );
 

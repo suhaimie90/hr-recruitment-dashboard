@@ -1,4 +1,4 @@
-import React, { useRef } from 'react';
+import React, { useRef, useState } from 'react';
 import {
   BarChart,
   Bar,
@@ -14,9 +14,9 @@ import {
   CartesianGrid,
   Legend
 } from 'recharts';
-import { BarChart3, Download, ImageDown } from 'lucide-react';
+import { BarChart3, Download, ImageDown, Loader2 } from 'lucide-react';
 import { Application, RecruitmentAnalytics } from '../types';
-import { downloadCsv, downloadChartAsPng, today } from '../lib/export';
+import { downloadCsv, downloadDashboardAsPng, today } from '../lib/export';
 
 interface AnalyticsViewProps {
   analytics: RecruitmentAnalytics;
@@ -35,6 +35,23 @@ const TOOLTIP_STYLE = {
 };
 
 export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ analytics, applications }) => {
+  const dashboardRef = useRef<HTMLDivElement>(null);
+  const [isExportingImage, setIsExportingImage] = useState(false);
+
+  const exportDashboardImage = async () => {
+    if (!dashboardRef.current) return;
+    setIsExportingImage(true);
+    try {
+      await downloadDashboardAsPng(
+        dashboardRef.current,
+        `recruitment-dashboard-${today()}.png`
+      );
+    } catch (err) {
+      alert(err instanceof Error ? err.message : 'Could not export the dashboard');
+    } finally {
+      setIsExportingImage(false);
+    }
+  };
   /**
    * Exports every chart's numbers as one CSV. Sections are separated by
    * blank rows so Excel shows four readable tables in a single sheet.
@@ -136,6 +153,19 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ analytics, applica
 
         <div className="flex items-center gap-2 flex-wrap">
           <button
+            onClick={exportDashboardImage}
+            disabled={isExportingImage}
+            className="flex items-center gap-1.5 bg-slate-900 hover:bg-slate-800 disabled:opacity-60 text-white text-xs font-semibold px-3 py-2 rounded-lg cursor-pointer transition-colors"
+            title="Download all charts together as one PNG"
+          >
+            {isExportingImage ? (
+              <Loader2 className="w-3.5 h-3.5 animate-spin" />
+            ) : (
+              <ImageDown className="w-3.5 h-3.5" />
+            )}
+            Dashboard (PNG)
+          </button>
+          <button
             onClick={exportSummary}
             className="flex items-center gap-1.5 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold px-3 py-2 rounded-lg cursor-pointer transition-colors"
             title="Download every chart's numbers as a CSV"
@@ -154,8 +184,8 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ analytics, applica
         </div>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <Panel title="Pipeline Stage Distribution" subtitle="Current counts" file="stage-distribution">
+      <div ref={dashboardRef} className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <Panel title="Pipeline Stage Distribution" subtitle="Current counts">
           <BarChart data={analytics.stageDistribution} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
             <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
             <XAxis dataKey="stage" tick={{ fontSize: 10, fill: '#64748b' }} />
@@ -165,7 +195,7 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ analytics, applica
           </BarChart>
         </Panel>
 
-        <Panel title="Applications vs Hires" subtitle="Last 6 months" file="applications-vs-hires">
+        <Panel title="Applications vs Hires" subtitle="Last 6 months">
           <AreaChart data={analytics.monthlyTrend} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
             <defs>
               <linearGradient id="colorApps" x1="0" y1="0" x2="0" y2="1">
@@ -186,7 +216,7 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ analytics, applica
           </AreaChart>
         </Panel>
 
-        <Panel title="Applicants by Branch" subtitle="Top 12 outlets" file="applicants-by-branch">
+        <Panel title="Applicants by Branch" subtitle="Top 12 outlets">
           <BarChart
             layout="vertical"
             data={analytics.branchBreakdown}
@@ -200,7 +230,7 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ analytics, applica
           </BarChart>
         </Panel>
 
-        <Panel title="Positions Applied" subtitle="Top 10" file="positions-applied">
+        <Panel title="Positions Applied" subtitle="Top 10">
           <PieChart>
             <Pie
               data={analytics.positionBreakdown}
@@ -230,36 +260,22 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ analytics, applica
 const Panel: React.FC<{
   title: string;
   subtitle: string;
-  file: string;
   children: React.ReactElement;
-}> = ({ title, subtitle, file, children }) => {
-  const chartRef = useRef<HTMLDivElement>(null);
-
-  const handleDownload = async () => {
-    if (!chartRef.current) return;
-    try {
-      await downloadChartAsPng(chartRef.current, `${file}-${today()}.png`);
-    } catch (err) {
-      alert(err instanceof Error ? err.message : 'Could not export the chart');
-    }
-  };
-
+}> = ({ title, subtitle, children }) => {
   return (
-    <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-2xs">
+    <div
+      data-chart-panel
+      data-title={title}
+      data-subtitle={subtitle}
+      className="bg-white p-5 rounded-xl border border-slate-200 shadow-2xs"
+    >
       <div className="flex items-center justify-between mb-4 gap-3">
         <h3 className="font-bold text-sm text-slate-900">{title}</h3>
         <div className="flex items-center gap-2 shrink-0">
           <span className="text-xs text-slate-400 hidden sm:inline">{subtitle}</span>
-          <button
-            onClick={handleDownload}
-            title="Download this chart as a PNG image"
-            className="p-1.5 text-slate-400 hover:text-indigo-600 hover:bg-slate-100 rounded transition-colors cursor-pointer"
-          >
-            <ImageDown className="w-4 h-4" />
-          </button>
         </div>
       </div>
-      <div className="h-64" ref={chartRef}>
+      <div className="h-64">
         <ResponsiveContainer width="100%" height="100%">
           {children}
         </ResponsiveContainer>

@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Calendar, User, MapPin, XCircle, Loader2 } from 'lucide-react';
+import { Calendar, User, MapPin, XCircle, Loader2, Trash2 } from 'lucide-react';
 import { Application, Interview } from '../types';
 import { initials } from '../lib/derive';
 
@@ -8,6 +8,7 @@ interface InterviewsViewProps {
   applications: Application[];
   canEdit: boolean;
   onCancel: (interview: Interview) => Promise<void>;
+  onRemove: (interview: Interview) => Promise<void>;
 }
 
 function isCancelled(interview: Interview): boolean {
@@ -18,7 +19,8 @@ export const InterviewsView: React.FC<InterviewsViewProps> = ({
   interviews,
   applications,
   canEdit,
-  onCancel
+  onCancel,
+  onRemove
 }) => {
   const now = Date.now();
 
@@ -55,6 +57,7 @@ export const InterviewsView: React.FC<InterviewsViewProps> = ({
         nameById={nameById}
         canEdit={canEdit}
         onCancel={onCancel}
+        onRemove={onRemove}
         emptyText="No upcoming interviews scheduled."
       />
 
@@ -63,10 +66,12 @@ export const InterviewsView: React.FC<InterviewsViewProps> = ({
           title="Past & Cancelled"
           rows={past}
           nameById={nameById}
-          canEdit={false}
+          canEdit={canEdit}
           onCancel={onCancel}
+          onRemove={onRemove}
           emptyText=""
           muted
+          allowRemove
         />
       )}
     </div>
@@ -79,10 +84,13 @@ const Section: React.FC<{
   nameById: Map<string, string>;
   canEdit: boolean;
   onCancel: (interview: Interview) => Promise<void>;
+  onRemove: (interview: Interview) => Promise<void>;
   emptyText: string;
   muted?: boolean;
-}> = ({ title, rows, nameById, canEdit, onCancel, emptyText, muted }) => {
+  allowRemove?: boolean;
+}> = ({ title, rows, nameById, canEdit, onCancel, onRemove, emptyText, muted, allowRemove }) => {
   const [cancellingRow, setCancellingRow] = useState<number | null>(null);
+  const [removingRow, setRemovingRow] = useState<number | null>(null);
 
   const handleCancel = async (interview: Interview) => {
     const candidate =
@@ -97,6 +105,21 @@ const Section: React.FC<{
       alert(err instanceof Error ? err.message : 'Could not cancel the interview');
     } finally {
       setCancellingRow(null);
+    }
+  };
+
+  const handleRemove = async (interview: Interview) => {
+    const candidate =
+      interview.candidateName || nameById.get(interview.applicationId || '') || 'this candidate';
+    if (!window.confirm(`Permanently remove this interview with ${candidate}? This cannot be undone.`)) return;
+
+    setRemovingRow(interview.rowNumber ?? null);
+    try {
+      await onRemove(interview);
+    } catch (err) {
+      alert(err instanceof Error ? err.message : 'Could not remove the interview');
+    } finally {
+      setRemovingRow(null);
     }
   };
 
@@ -174,6 +197,22 @@ const Section: React.FC<{
                         <XCircle className="w-3.5 h-3.5" />
                       )}
                       Cancel
+                    </button>
+                  )}
+
+                  {canEdit && allowRemove && (
+                    <button
+                      onClick={() => handleRemove(interview)}
+                      disabled={removingRow === interview.rowNumber}
+                      title="Permanently remove this interview"
+                      className="flex items-center gap-1.5 bg-white hover:bg-slate-100 border border-slate-300 text-slate-600 disabled:opacity-50 font-semibold text-xs px-3 py-1.5 rounded-lg transition-colors cursor-pointer"
+                    >
+                      {removingRow === interview.rowNumber ? (
+                        <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                      ) : (
+                        <Trash2 className="w-3.5 h-3.5" />
+                      )}
+                      Remove
                     </button>
                   )}
                 </div>

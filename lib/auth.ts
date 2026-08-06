@@ -23,6 +23,9 @@ export interface SessionUser {
   name: string;
   role: string;
   canEdit: boolean;
+  canViewAnalytics: boolean;
+  allowedBranches: string[];
+  allowedPositions: string[];
 }
 
 const SESSION_COOKIE = 'th_session';
@@ -176,7 +179,7 @@ export async function lookupUser(env: Env, email: string | null | undefined): Pr
   if (!email || !env.SUPABASE_URL || !env.SUPABASE_SERVICE_ROLE_KEY) return null;
 
   const res = await fetch(
-    `${env.SUPABASE_URL}/rest/v1/users?select=email,name,role,active&email=ilike.${enc(email)}&limit=1`,
+    `${env.SUPABASE_URL}/rest/v1/users?select=email,name,role,active,allowed_branches,allowed_positions&email=ilike.${enc(email)}&limit=1`,
     {
       headers: {
         apikey: env.SUPABASE_SERVICE_ROLE_KEY,
@@ -192,11 +195,17 @@ export async function lookupUser(env: Env, email: string | null | undefined): Pr
   if (!match || !match.active) return null;
 
   const role = String(match.role || 'Viewer');
+  const normalizedRole = role.trim().toLowerCase();
+  const stringArray = (value: unknown) =>
+    (Array.isArray(value) ? value : []).map(String).map((item) => item.trim()).filter(Boolean);
 
   return {
     email: String(match.email),
     name: String(match.name || match.email),
     role,
-    canEdit: role.trim().toLowerCase() !== 'viewer'
+    canEdit: normalizedRole !== 'viewer',
+    canViewAnalytics: /admin|manager|director|strategic/.test(normalizedRole),
+    allowedBranches: stringArray(match.allowed_branches),
+    allowedPositions: stringArray(match.allowed_positions)
   };
 }

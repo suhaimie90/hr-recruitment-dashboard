@@ -33,6 +33,7 @@ export const Header: React.FC<HeaderProps> = ({
   // typed-in position appears here without a code change.
   const branches = useMemo(() => uniqueValues(applications, 'preferredBranch'), [applications]);
   const positions = useMemo(() => uniqueValues(applications, 'position'), [applications]);
+  const states = useMemo(() => uniqueValues(applications, 'preferredState'), [applications]);
 
   return (
     <header className="bg-white border-b border-slate-200 px-6 py-4 sticky top-0 z-20 shadow-xs">
@@ -58,6 +59,23 @@ export const Header: React.FC<HeaderProps> = ({
                 <X className="w-3.5 h-3.5" />
               </button>
             )}
+          </div>
+
+          <div className="flex items-center gap-1.5 bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-slate-700">
+            <MapPin className="w-3.5 h-3.5 text-slate-500" />
+            <span className="font-medium text-slate-500 hidden sm:inline">State:</span>
+            <select
+              value={filters.state}
+              onChange={(e) => setFilters((prev) => ({ ...prev, state: e.target.value }))}
+              className="bg-transparent font-semibold text-slate-800 outline-none cursor-pointer pr-1 max-w-[150px]"
+            >
+              <option value="ALL">All States</option>
+              {states.map((state) => (
+                <option key={state} value={state}>
+                  {state}
+                </option>
+              ))}
+            </select>
           </div>
 
           {/* Applied-date range */}

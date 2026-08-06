@@ -307,14 +307,15 @@ function buildUsers(rows) {
     .filter((r) => pick(r, ['email']))
     .map((r) => {
       const locations = toArray(pick(r, ['locations', 'allowedbranches', 'branches']));
+      const positions = toArray(pick(r, ['positions', 'allowedpositions']));
       return {
         email: pick(r, ['email']),
         name: pick(r, ['name']) || pick(r, ['email']),
         role: pick(r, ['role']) || 'Viewer',
-        // NULL means every branch. Role scoping was previously removed
-        // as over-engineering, so the default has to stay permissive
-        // until the API layer actually enforces it.
+        // Admin/Senior Manager are globally allowed by role. For scoped
+        // roles, NULL/empty means no access until explicitly assigned.
         allowed_branches: locations.length ? locations : null,
+        allowed_positions: positions.length ? positions : null,
         active: toBool(pick(r, ['active']))
       };
     });

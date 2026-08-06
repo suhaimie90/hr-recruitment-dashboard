@@ -26,6 +26,7 @@ import {
   addNote,
   scheduleInterview,
   cancelInterview,
+  removeInterview,
   archiveApplication
 } from './services/api';
 
@@ -99,6 +100,7 @@ export default function App() {
   // Prefer what the server resolved. Fall back to the role name only
   // when an older Apps Script deployment doesn't send the field.
   const canEdit = user?.canEdit ?? (user?.role ?? '').toLowerCase() !== 'viewer';
+  const canViewAnalytics = user?.canViewAnalytics ?? /admin|manager/i.test(user?.role ?? '');
 
   // ── Session restore ─────────────────────────────────────
   // Identity lives in the HttpOnly cookie Google sign-in set (see
@@ -278,6 +280,15 @@ export default function App() {
     setInterviews(await fetchInterviews().catch(() => interviews));
   };
 
+  const handleRemoveInterview = async (interview: Interview) => {
+    if (!interview.rowNumber || !interview.applicationId) {
+      throw new Error('This interview is missing its reference — refresh and try again');
+    }
+
+    await removeInterview(interview.applicationId, interview.rowNumber);
+    setInterviews((current) => current.filter((item) => item.rowNumber !== interview.rowNumber));
+  };
+
   const handleScheduleInterview = async (
     applicationId: string,
     data: Parameters<typeof scheduleInterview>[1]
@@ -340,7 +351,7 @@ export default function App() {
 
           {(activeTab === 'pipeline' || activeTab === 'candidates') && (
             <div>
-              <AnalyticsCards analytics={analytics} />
+              {canViewAnalytics && <AnalyticsCards analytics={analytics} />}
 
               <div className="flex items-center justify-between mb-4 gap-4 flex-wrap">
                 <div className="flex items-center gap-2 bg-slate-200/70 p-1 rounded-lg">
@@ -417,7 +428,7 @@ export default function App() {
             </div>
           )}
 
-          {activeTab === 'analytics' && (
+          {activeTab === 'analytics' && canViewAnalytics && (
             <Suspense
               fallback={
                 <div className="flex justify-center py-20">
@@ -435,6 +446,7 @@ export default function App() {
               applications={applications}
               canEdit={canEdit}
               onCancel={handleCancelInterview}
+              onRemove={handleRemoveInterview}
             />
           )}
         </main>
