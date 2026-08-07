@@ -8,6 +8,24 @@ interface ResumeViewerModalProps {
   onClose: () => void;
 }
 
+/**
+ * Google Drive's normal /view page refuses to render in an iframe.
+ * Its /preview endpoint is intended for embedded document viewing.
+ * Non-Drive URLs (including legacy Supabase signed URLs) pass through.
+ */
+function toPreviewUrl(url: string): string {
+  try {
+    const parsed = new URL(url);
+    if (parsed.hostname !== 'drive.google.com') return url;
+
+    const pathId = parsed.pathname.match(/^\/file\/d\/([^/]+)/)?.[1];
+    const fileId = pathId || parsed.searchParams.get('id');
+    return fileId ? `https://drive.google.com/file/d/${encodeURIComponent(fileId)}/preview` : url;
+  } catch {
+    return url;
+  }
+}
+
 export const ResumeViewerModal: React.FC<ResumeViewerModalProps> = ({ application, onClose }) => {
   // Fetch one applicant fresh: new records return their private Drive
   // link; legacy Storage records receive a short-lived signed URL.
@@ -43,6 +61,8 @@ export const ResumeViewerModal: React.FC<ResumeViewerModalProps> = ({ applicatio
   }, [applicationId]);
 
   if (!application) return null;
+
+  const previewUrl = resumeUrl ? toPreviewUrl(resumeUrl) : '';
 
   return (
     <div className="fixed inset-0 z-[60] bg-slate-900/70 backdrop-blur-xs flex items-center justify-center p-4">
@@ -83,9 +103,9 @@ export const ResumeViewerModal: React.FC<ResumeViewerModalProps> = ({ applicatio
               <Loader2 className="w-6 h-6 animate-spin" />
               <p className="text-sm">Fetching resume link…</p>
             </div>
-          ) : resumeUrl ? (
+          ) : previewUrl ? (
             <iframe
-              src={resumeUrl}
+              src={previewUrl}
               title={`${application.fullName} resume`}
               className="w-full h-full border-0"
               allow="autoplay"
