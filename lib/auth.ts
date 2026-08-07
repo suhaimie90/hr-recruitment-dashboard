@@ -178,8 +178,11 @@ export function decodeIdTokenPayload(idToken: string): Record<string, unknown> {
 export async function lookupUser(env: Env, email: string | null | undefined): Promise<SessionUser | null> {
   if (!email || !env.SUPABASE_URL || !env.SUPABASE_SERVICE_ROLE_KEY) return null;
 
+  const normalizedEmail = email.trim().toLowerCase();
+  if (!normalizedEmail || normalizedEmail.length > 254) return null;
+
   const res = await fetch(
-    `${env.SUPABASE_URL}/rest/v1/users?select=email,name,role,active,allowed_branches,allowed_positions&email=ilike.${enc(email)}&limit=1`,
+    `${env.SUPABASE_URL}/rest/v1/users?select=email,name,role,active,allowed_branches,allowed_positions&email=eq.${enc(normalizedEmail)}&limit=1`,
     {
       headers: {
         apikey: env.SUPABASE_SERVICE_ROLE_KEY,
@@ -200,7 +203,7 @@ export async function lookupUser(env: Env, email: string | null | undefined): Pr
     (Array.isArray(value) ? value : []).map(String).map((item) => item.trim()).filter(Boolean);
 
   return {
-    email: String(match.email),
+    email: String(match.email).trim().toLowerCase(),
     name: String(match.name || match.email),
     role,
     canEdit: normalizedRole !== 'viewer',

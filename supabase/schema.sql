@@ -60,7 +60,9 @@ create table applications (
 
   full_name         text not null,
   ic_number         text,
-  email             text not null,
+  email             text not null
+                    constraint applications_email_normalized
+                    check (email = lower(btrim(email))),
   phone             text,
   address           text,
   city              text,
@@ -89,7 +91,7 @@ create table applications (
 
 -- Duplicate-check (7-day window) and Kanban board queries both filter
 -- by these, same as the current Apps Script logic.
-create index idx_applications_email on applications (lower(email));
+create index idx_applications_email on applications (email);
 create index idx_applications_stage on applications (stage);
 create index idx_applications_archived_at on applications (archived_at);
 create index idx_applications_submitted_at on applications (submitted_at);
@@ -102,7 +104,9 @@ create index idx_applications_submitted_at on applications (submitted_at);
 -- Supervisor and Viewer, NULL/empty assignments mean no access.
 
 create table users (
-  email             text primary key,
+  email             text primary key
+                    constraint users_email_normalized
+                    check (email = lower(btrim(email))),
   name              text not null,
   role              text not null default 'Viewer',
   allowed_branches  text[],

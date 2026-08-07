@@ -9,10 +9,8 @@ interface ResumeViewerModalProps {
 }
 
 export const ResumeViewerModal: React.FC<ResumeViewerModalProps> = ({ application, onClose }) => {
-  // The list/board/drawer only ever hold the unresolved resume value —
-  // a raw storage path, not a link (see toListRow in functions/api/data.ts).
-  // Only apiApplication mints a signed URL, and only for one candidate at
-  // a time, so it is fetched fresh here rather than trusted from the caller.
+  // Fetch one applicant fresh: new records return their private Drive
+  // link; legacy Storage records receive a short-lived signed URL.
   const [resumeUrl, setResumeUrl] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
 
@@ -101,7 +99,7 @@ export const ResumeViewerModal: React.FC<ResumeViewerModalProps> = ({ applicatio
         </div>
 
         <div className="px-6 py-2.5 bg-slate-50 border-t border-slate-200 text-[11px] text-slate-500 shrink-0">
-          Preview requires a valid resume link. If it stays blank, confirm the file exists in storage.
+          Preview requires access to the résumé. Confirm the file exists and your Google account can open it.
         </div>
       </div>
     </div>

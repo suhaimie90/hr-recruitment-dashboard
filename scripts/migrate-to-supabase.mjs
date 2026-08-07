@@ -269,7 +269,7 @@ function buildApplications(rows) {
       submitted_at: submitted ?? new Date().toISOString(),
       full_name: pick(r, ['fullname', 'name']),
       ic_number: nullIfBlank(stripQuote(pick(r, ['icnumber', 'ic']))),
-      email: pick(r, ['email']),
+      email: pick(r, ['email']).trim().toLowerCase(),
       phone: nullIfBlank(stripQuote(pick(r, ['phone']))),
       address: nullIfBlank(pick(r, ['address'])),
       city: nullIfBlank(pick(r, ['city'])),
@@ -309,7 +309,7 @@ function buildUsers(rows) {
       const locations = toArray(pick(r, ['locations', 'allowedbranches', 'branches']));
       const positions = toArray(pick(r, ['positions', 'allowedpositions']));
       return {
-        email: pick(r, ['email']),
+        email: pick(r, ['email']).trim().toLowerCase(),
         name: pick(r, ['name']) || pick(r, ['email']),
         role: pick(r, ['role']) || 'Viewer',
         // Admin/Senior Manager are globally allowed by role. For scoped

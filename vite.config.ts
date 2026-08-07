@@ -114,7 +114,9 @@ function apiDevServer(env: Record<string, string>): Plugin {
 
       const dataEnv = {
         SUPABASE_URL: env.SUPABASE_URL,
-        SUPABASE_SERVICE_ROLE_KEY: env.SUPABASE_SERVICE_ROLE_KEY
+        SUPABASE_SERVICE_ROLE_KEY: env.SUPABASE_SERVICE_ROLE_KEY,
+        GAS_URL: env.GAS_URL,
+        GAS_TOKEN: env.GAS_TOKEN
       };
 
       const authEnv = {

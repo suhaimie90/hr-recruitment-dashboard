@@ -118,9 +118,9 @@ const remove = (env: Env, table: string, query: string) =>
  * URL would go dead when it expires, so a fresh one is minted here,
  * on the one read that actually needs it (the applicant drawer).
  *
- * Rows migrated from the old Google Sheet still hold a real Drive
- * URL in this column (already a working link), so those pass through
- * unchanged rather than being run through Storage at all.
+ * New submissions and rows migrated from Google Sheets hold a Drive
+ * URL, so those pass through unchanged. Older Supabase Storage object
+ * paths still receive a fresh signed URL for backward compatibility.
  */
 async function resolveResumeUrl(env: Env, stored: string | null | undefined): Promise<string> {
   if (!stored) return '';
@@ -177,6 +177,27 @@ function stamp(value?: string | null): string {
 const nowIso = () => new Date().toISOString();
 
 const isDecidedStage = (stage: unknown) => /hired|rejected/i.test(String(stage ?? ''));
+
+const APPLICATION_ID_PATTERN = /^APP-\d{8}-[A-F0-9]{8}$/;
+
+function requireApplicationId(value: unknown): string {
+  const applicationId = String(value ?? '').trim();
+  if (!APPLICATION_ID_PATTERN.test(applicationId)) {
+    throw new Error('Invalid applicationId');
+  }
+  return applicationId;
+}
+
+function requirePositiveSafeInteger(value: unknown, field: string): number {
+  const raw = typeof value === 'number' ? String(value) : String(value ?? '').trim();
+  if (!/^\d+$/.test(raw)) throw new Error(`${field} must be a positive integer`);
+
+  const parsed = Number(raw);
+  if (!Number.isSafeInteger(parsed) || parsed <= 0) {
+    throw new Error(`${field} must be a positive integer`);
+  }
+  return parsed;
+}
 
 // ── auth ────────────────────────────────────────────────
 
@@ -259,10 +280,8 @@ function toListRow(r: Row) {
     experience: r.experience || '',
     // Unresolved here on purpose — see resolveResumeUrl. Migrated rows
     // still hold a working Drive link, so this is fine as-is for them.
-    // New Storage-backed resumes only get a real, signed link when
-    // apiApplication runs (the drawer), same trimming the list already
-    // does for IC number, address, etc. Minting a signed URL for every
-    // row in a 400+ list on every load would be wasteful.
+    // Storage-backed legacy resumes only get a signed link when one
+    // applicant is opened. Drive-backed values are already URLs.
     resumeUrl: r.resume_url || '',
     preferredState: r.preferred_state || '',
     preferredBranch: r.preferred_branch || '',
@@ -345,15 +364,15 @@ async function writeAudit(
 
 /** Throws unless the application exists. Also gives callers its row. */
 async function getApplication(env: Env, applicationId: unknown, columns = '*'): Promise<Row> {
-  if (!applicationId) throw new Error('applicationId is required');
+  const validatedApplicationId = requireApplicationId(applicationId);
 
   const rows = await select<Row>(
     env,
     'applications',
-    `select=${columns}&application_id=eq.${enc(String(applicationId))}&limit=1`
+    `select=${columns}&application_id=eq.${enc(validatedApplicationId)}&limit=1`
   );
 
-  if (!rows.length) throw new Error(`Application not found: ${applicationId}`);
+  if (!rows.length) throw new Error(`Application not found: ${validatedApplicationId}`);
   return rows[0];
 }
 
@@ -721,9 +740,8 @@ async function apiCancelInterview(env: Env, user: User, payload: Row) {
   requireWriteAccess(user);
 
   const applicationId = payload.applicationId;
-  const rowNumber = Number(payload.rowNumber);
-
-  if (!applicationId || !rowNumber) throw new Error('applicationId and rowNumber are required');
+  if (!applicationId) throw new Error('applicationId is required');
+  const rowNumber = requirePositiveSafeInteger(payload.rowNumber, 'rowNumber');
   await getScopedApplication(env, user, applicationId, 'application_id');
 
   const rows = await select<Row>(
@@ -763,8 +781,8 @@ async function apiRemoveInterview(env: Env, user: User, payload: Row) {
   requireWriteAccess(user);
 
   const applicationId = payload.applicationId;
-  const rowNumber = Number(payload.rowNumber);
-  if (!applicationId || !rowNumber) throw new Error('applicationId and rowNumber are required');
+  if (!applicationId) throw new Error('applicationId is required');
+  const rowNumber = requirePositiveSafeInteger(payload.rowNumber, 'rowNumber');
   await getScopedApplication(env, user, applicationId, 'application_id');
 
   const rows = await select<Row>(

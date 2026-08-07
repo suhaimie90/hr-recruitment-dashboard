@@ -22,14 +22,18 @@
  * why that system needed one; this one doesn't.)
  *
  * Environment variables (Pages -> Settings -> Variables and secrets),
- * both as **Secret**:
+ * all as **Secret**:
  *   SUPABASE_URL               same as functions/api/data.ts
  *   SUPABASE_SERVICE_ROLE_KEY  same as functions/api/data.ts
+ *   GAS_URL                    Apps Script /exec URL for Drive uploads
+ *   GAS_TOKEN                  matches DASHBOARD_TOKEN in Config.gs
  */
 
 export interface Env {
   SUPABASE_URL?: string;
   SUPABASE_SERVICE_ROLE_KEY?: string;
+  GAS_URL?: string;
+  GAS_TOKEN?: string;
 }
 
 const MAX_FILE_SIZE = 5 * 1024 * 1024; // 5MB — matches Config.gs
@@ -49,6 +53,15 @@ const CORS_HEADERS = {
 };
 
 const enc = encodeURIComponent;
+
+// Store and compare a canonical email value. Exact PostgREST equality
+// avoids treating user-supplied characters as an ILIKE pattern.
+const EMAIL_PATTERN =
+  /^[a-z0-9.!#$%&'+/=?^_`{|}~-]+@[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$/i;
+
+function normalizeEmail(value: unknown): string {
+  return sanitize(value).toLowerCase();
+}
 
 function json(status: number, body: unknown): Response {
   return new Response(JSON.stringify(body), {
@@ -113,30 +126,48 @@ function base64ToBytes(base64: string): Uint8Array {
   return bytes;
 }
 
-async function uploadResume(
+async function uploadResumeToDrive(
   env: Env,
-  path: string,
-  bytes: Uint8Array,
-  mimeType: string
-): Promise<void> {
-  const res = await fetch(`${env.SUPABASE_URL}/storage/v1/object/resumes/${enc(path)}`, {
+  applicationId: string,
+  fullName: string,
+  fileName: string,
+  mimeType: string,
+  base64: string
+): Promise<string> {
+  const res = await fetch(env.GAS_URL as string, {
     method: 'POST',
-    headers: {
-      apikey: env.SUPABASE_SERVICE_ROLE_KEY as string,
-      Authorization: `Bearer ${env.SUPABASE_SERVICE_ROLE_KEY}`,
-      'Content-Type': mimeType
-    },
-    body: bytes
+    headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+    body: JSON.stringify({
+      action: 'uploadResume',
+      token: env.GAS_TOKEN,
+      applicationId,
+      fullName,
+      resumeFileName: fileName,
+      resumeMimeType: mimeType,
+      resumeBase64: base64
+    }),
+    redirect: 'follow'
   });
 
-  if (!res.ok) {
-    throw new Error(`Resume upload failed: HTTP ${res.status} — ${(await res.text()).slice(0, 300)}`);
+  const text = await res.text();
+  if (!res.ok) throw new Error(`Drive upload failed: HTTP ${res.status}`);
+
+  let result: Record<string, unknown>;
+  try {
+    result = JSON.parse(text) as Record<string, unknown>;
+  } catch {
+    throw new Error('Drive upload returned an invalid response');
   }
+
+  if (result.result !== 'success' || !result.resumeUrl) {
+    throw new Error(String(result.message || 'Drive upload failed'));
+  }
+  return String(result.resumeUrl);
 }
 
 async function handleSubmit(request: Request, env: Env) {
-  if (!env.SUPABASE_URL || !env.SUPABASE_SERVICE_ROLE_KEY) {
-    return fail('Server is not configured (SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY missing).');
+  if (!env.SUPABASE_URL || !env.SUPABASE_SERVICE_ROLE_KEY || !env.GAS_URL || !env.GAS_TOKEN) {
+    return fail('Server is not configured for Supabase and Google Drive uploads.');
   }
 
   let raw: Record<string, unknown>;
@@ -155,7 +186,7 @@ async function handleSubmit(request: Request, env: Env) {
   const data = {
     fullName: sanitize(raw.fullName),
     icNumber: sanitize(raw.icNumber),
-    email: sanitize(raw.email),
+    email: normalizeEmail(raw.email),
     phone: sanitize(raw.phone),
     address: sanitize(raw.address),
     city: sanitize(raw.city),
@@ -172,7 +203,7 @@ async function handleSubmit(request: Request, env: Env) {
   };
 
   // ── email format ──────────────────────────────────────
-  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(data.email)) {
+  if (data.email.length > 254 || !EMAIL_PATTERN.test(data.email)) {
     return fail('Invalid email address');
   }
 
@@ -203,7 +234,7 @@ async function handleSubmit(request: Request, env: Env) {
   const cutoff = new Date(Date.now() - DUPLICATE_LIMIT_HOURS * 60 * 60 * 1000).toISOString();
   const recent = await sb<Array<{ application_id: string }>>(
     env,
-    `applications?select=application_id&email=ilike.${enc(data.email)}&submitted_at=gte.${enc(cutoff)}&limit=1`
+    `applications?select=application_id&email=eq.${enc(data.email)}&submitted_at=gte.${enc(cutoff)}&limit=1`
   );
   if (recent.length) {
     return fail('You have already submitted an application within the last 7 days.');
@@ -212,15 +243,21 @@ async function handleSubmit(request: Request, env: Env) {
   // ── build the record ──────────────────────────────────
   const applicationId = newApplicationId();
 
-  const cleanName = data.fullName.replace(/[/\\:*?"<>|]/g, '').replace(/\s+/g, '_') || 'Applicant';
-  const resumePath = `${applicationId}_${cleanName}_Resume.${extension}`;
-
-  // ── resume to Storage ──────────────────────────────────
+  // The file is sent only to the token-protected Apps Script uploader.
+  // Supabase receives the Drive URL, never the resume bytes.
+  let resumeUrl: string;
   try {
-    await uploadResume(env, resumePath, resumeBytes, resumeMimeType);
+    resumeUrl = await uploadResumeToDrive(
+      env,
+      applicationId,
+      data.fullName,
+      resumeFileName,
+      resumeMimeType,
+      resumeBase64
+    );
   } catch (err) {
-    console.error('Resume upload failed:', err);
-    return fail('Could not save your resume — please try again.');
+    console.error('Drive resume upload failed:', err);
+    return fail('Could not save your resume - please try again.');
   }
 
   // ── row insert ──────────────────────────────────────────
@@ -245,10 +282,8 @@ async function handleSubmit(request: Request, env: Env) {
         experience: data.experience || null,
         cover_message: data.coverMessage || null,
         resume_file_name: resumeFileName || null,
-        // Stored as a bare object path, not a URL — apiApplication in
-        // data.ts generates a fresh signed URL on read instead, since
-        // a stored signed URL would go dead when it expires.
-        resume_url: resumePath,
+        // Private Google Drive URL. Folder permissions control access.
+        resume_url: resumeUrl,
         preferred_state: data.preferredState || null,
         preferred_branch: data.preferredBranch,
         relocation: data.relocation || null,
@@ -261,8 +296,8 @@ async function handleSubmit(request: Request, env: Env) {
       headers: { Prefer: 'return=minimal' }
     });
   } catch (err) {
-    // The resume already uploaded at this point. Left in Storage
-    // rather than attempting a rollback delete — an orphan file costs
+    // The resume already uploaded at this point. Left in Drive rather
+    // than attempting a rollback delete - an orphan file costs
     // nothing and a failed best-effort cleanup would just obscure the
     // real error.
     console.error('Application insert failed:', err);
