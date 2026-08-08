@@ -1,5 +1,5 @@
-import React, { useState, useEffect, useCallback, useMemo, lazy, Suspense } from 'react';
-import { Kanban, Table, Loader2, AlertCircle } from 'lucide-react';
+import React, { useState, useEffect, useCallback, useMemo, useRef, lazy, Suspense } from 'react';
+import { Kanban, Table, Loader2, AlertCircle, Bell } from 'lucide-react';
 
 import { Sidebar, ActiveTab } from './components/Sidebar';
 import { Header } from './components/Header';
@@ -21,6 +21,8 @@ import {
   fetchBootstrap,
   logout,
   fetchApplications,
+  fetchApplication,
+  fetchNotifications,
   fetchInterviews,
   updateStage,
   addNote,
@@ -32,6 +34,7 @@ import {
 
 import {
   Application,
+  ApplicationNotification,
   ApplicationStage,
   AppUser,
   FilterState,
@@ -72,6 +75,11 @@ export default function App() {
   const [activeTab, setActiveTab] = useState<ActiveTab>('pipeline');
   const [selectedApplication, setSelectedApplication] = useState<Application | null>(null);
   const [selectedResumeApp, setSelectedResumeApp] = useState<Application | null>(null);
+  const [notifications, setNotifications] = useState<ApplicationNotification[]>([]);
+  const [unreadNotificationCount, setUnreadNotificationCount] = useState(0);
+  const [toastNotification, setToastNotification] = useState<ApplicationNotification | null>(null);
+  const notificationCursorRef = useRef('');
+  const knownNotificationIdsRef = useRef<Set<string>>(new Set());
 
   const [filters, setFilters] = useState<FilterState>({
     searchQuery: '',
@@ -132,6 +140,9 @@ export default function App() {
     } finally {
       setUser(null);
       setApplications([]);
+      setNotifications([]);
+      setUnreadNotificationCount(0);
+      setToastNotification(null);
     }
   };
 
@@ -161,6 +172,98 @@ export default function App() {
   useEffect(() => {
     loadData();
   }, [loadData]);
+
+  // Lightweight in-app notifications. The stored cursor means a page
+  // refresh can restore unread applications, while a separate polling
+  // cursor prevents the same rows being downloaded every minute.
+  useEffect(() => {
+    if (!user?.email) return;
+
+    let cancelled = false;
+    let polling = false;
+    let initialPoll = true;
+    const storageKey = `hr-notifications:last-seen:${user.email.trim().toLowerCase()}`;
+
+    try {
+      notificationCursorRef.current = localStorage.getItem(storageKey) || '';
+    } catch {
+      notificationCursorRef.current = '';
+    }
+
+    knownNotificationIdsRef.current = new Set();
+    setNotifications([]);
+    setUnreadNotificationCount(0);
+
+    const poll = async () => {
+      if (polling || cancelled) return;
+      polling = true;
+
+      try {
+        const hadCursor = Boolean(notificationCursorRef.current);
+        const result = await fetchNotifications(notificationCursorRef.current || undefined);
+        if (cancelled) return;
+
+        notificationCursorRef.current = result.checkedAt;
+
+        // First use starts from server time so existing applications do
+        // not appear as a wall of historical notifications.
+        if (!hadCursor) {
+          try {
+            localStorage.setItem(storageKey, result.checkedAt);
+          } catch {
+            // Notifications still work for this session if storage is unavailable.
+          }
+          initialPoll = false;
+          return;
+        }
+
+        const fresh = result.data.filter(
+          (item) => !knownNotificationIdsRef.current.has(item.applicationId)
+        );
+        fresh.forEach((item) => knownNotificationIdsRef.current.add(item.applicationId));
+
+        if (fresh.length) {
+          setNotifications((current) => {
+            const byId = new Map(current.map((item) => [item.applicationId, item]));
+            fresh.forEach((item) => byId.set(item.applicationId, item));
+            return [...byId.values()]
+              .sort((a, b) => Date.parse(b.submittedAt) - Date.parse(a.submittedAt))
+              .slice(0, 20);
+          });
+          setUnreadNotificationCount((count) => count + fresh.length);
+          if (!initialPoll) setToastNotification(fresh[0]);
+        }
+
+        initialPoll = false;
+      } catch (err) {
+        // A notification failure must never interrupt normal dashboard use.
+        console.error('Notification poll failed:', err);
+      } finally {
+        polling = false;
+      }
+    };
+
+    poll();
+    const interval = window.setInterval(() => {
+      if (document.visibilityState === 'visible') poll();
+    }, 60_000);
+    const pollWhenVisible = () => {
+      if (document.visibilityState === 'visible') poll();
+    };
+    document.addEventListener('visibilitychange', pollWhenVisible);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(interval);
+      document.removeEventListener('visibilitychange', pollWhenVisible);
+    };
+  }, [user?.email]);
+
+  useEffect(() => {
+    if (!toastNotification) return;
+    const timer = window.setTimeout(() => setToastNotification(null), 6_000);
+    return () => window.clearTimeout(timer);
+  }, [toastNotification]);
 
   // Filtering is local, so it re-runs instantly without a network call.
   const visibleApplications = useMemo(
@@ -222,6 +325,43 @@ export default function App() {
 
     if (canEdit && screeningStage && app.stage === firstStage) {
       handleUpdateStage(app.applicationId, screeningStage, 'Auto-advanced on first open');
+    }
+  };
+
+  const handleMarkNotificationsRead = () => {
+    if (!user?.email || !notificationCursorRef.current) return;
+    const storageKey = `hr-notifications:last-seen:${user.email.trim().toLowerCase()}`;
+    try {
+      localStorage.setItem(storageKey, notificationCursorRef.current);
+    } catch {
+      // The in-memory unread count can still be cleared.
+    }
+    setUnreadNotificationCount(0);
+  };
+
+  const handleOpenNotification = async (notification: ApplicationNotification) => {
+    handleMarkNotificationsRead();
+    setToastNotification(null);
+    setActiveTab('pipeline');
+
+    const existing = applications.find(
+      (application) => application.applicationId === notification.applicationId
+    );
+    if (existing) {
+      handleSelectApplication(existing);
+      return;
+    }
+
+    try {
+      const application = await fetchApplication(notification.applicationId);
+      setApplications((current) =>
+        current.some((item) => item.applicationId === application.applicationId)
+          ? current
+          : [application, ...current]
+      );
+      handleSelectApplication(application);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not open the new application.');
     }
   };
 
@@ -334,6 +474,10 @@ export default function App() {
           archiveAfterDays={archiveAfterDays}
           showArchived={showArchived}
           setShowArchived={setShowArchived}
+          notifications={notifications}
+          unreadNotificationCount={unreadNotificationCount}
+          onMarkNotificationsRead={handleMarkNotificationsRead}
+          onOpenNotification={handleOpenNotification}
         />
 
         <main className="flex-1 overflow-y-auto p-6">
@@ -451,6 +595,27 @@ export default function App() {
           )}
         </main>
       </div>
+
+      {toastNotification && (
+        <button
+          type="button"
+          onClick={() => handleOpenNotification(toastNotification)}
+          className="fixed right-6 top-20 z-50 w-[min(22rem,calc(100vw-3rem))] bg-slate-900 text-white rounded-xl shadow-2xl border border-slate-700 p-4 text-left hover:bg-slate-800 transition-colors cursor-pointer"
+        >
+          <div className="flex items-start gap-3">
+            <div className="w-9 h-9 rounded-lg bg-indigo-500/20 text-indigo-300 flex items-center justify-center shrink-0">
+              <Bell className="w-4 h-4" />
+            </div>
+            <div className="min-w-0">
+              <p className="text-xs font-bold text-indigo-300">New application</p>
+              <p className="text-sm font-semibold truncate mt-0.5">{toastNotification.fullName}</p>
+              <p className="text-[11px] text-slate-300 mt-1 truncate">
+                {toastNotification.position} · {toastNotification.preferredBranch}
+              </p>
+            </div>
+          </div>
+        </button>
+      )}
 
       <ApplicantModal
         application={selectedApplication}

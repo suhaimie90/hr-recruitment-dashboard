@@ -1,5 +1,6 @@
 import {
   Application,
+  ApplicationNotification,
   ApplicationDetail,
   ActivityBundle,
   AppUser,
@@ -89,6 +90,18 @@ export async function fetchApplications(includeArchived = false): Promise<Applic
     archivedCount: json.archivedCount || 0,
     archiveAfterDays: json.archiveAfterDays || 30
   };
+}
+
+export interface NotificationsResult {
+  data: ApplicationNotification[];
+  /** Server cursor for the next poll, avoiding dependence on browser clock. */
+  checkedAt: string;
+}
+
+/** Fetches only new, role-scoped application metadata for the notification bell. */
+export async function fetchNotifications(since?: string): Promise<NotificationsResult> {
+  const json = await get<NotificationsResult>('notifications', since ? { since } : {});
+  return { data: json.data || [], checkedAt: json.checkedAt };
 }
 
 /**

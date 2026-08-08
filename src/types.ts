@@ -54,6 +54,15 @@ export interface ApplicationDetail extends Application {
   archived: boolean;
 }
 
+/** Minimal role-scoped row used by the in-app notification feed. */
+export interface ApplicationNotification {
+  applicationId: string;
+  submittedAt: string;
+  fullName: string;
+  position: string;
+  preferredBranch: string;
+}
+
 /** One row of the AuditLog sheet. Doubles as note and timeline entry. */
 export interface AuditEntry {
   timestamp: string;

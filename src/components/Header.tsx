@@ -1,7 +1,8 @@
 import React, { useMemo } from 'react';
 import { Search, MapPin, Briefcase, RefreshCw, SlidersHorizontal, CalendarDays, X, Archive } from 'lucide-react';
-import { Application, FilterState } from '../types';
+import { Application, ApplicationNotification, FilterState } from '../types';
 import { uniqueValues } from '../lib/derive';
+import { NotificationCenter } from './NotificationCenter';
 
 interface HeaderProps {
   filters: FilterState;
@@ -15,6 +16,10 @@ interface HeaderProps {
   archiveAfterDays: number;
   showArchived: boolean;
   setShowArchived: (value: boolean) => void;
+  notifications: ApplicationNotification[];
+  unreadNotificationCount: number;
+  onMarkNotificationsRead: () => void;
+  onOpenNotification: (notification: ApplicationNotification) => void;
 }
 
 export const Header: React.FC<HeaderProps> = ({
@@ -27,13 +32,19 @@ export const Header: React.FC<HeaderProps> = ({
   archivedCount,
   archiveAfterDays,
   showArchived,
-  setShowArchived
+  setShowArchived,
+  notifications,
+  unreadNotificationCount,
+  onMarkNotificationsRead,
+  onOpenNotification
 }) => {
   // Filter options come from the data itself, so a new branch or a
   // typed-in position appears here without a code change.
   const branches = useMemo(() => uniqueValues(applications, 'preferredBranch'), [applications]);
   const positions = useMemo(() => uniqueValues(applications, 'position'), [applications]);
-  const states = useMemo(() => uniqueValues(applications, 'preferredState'), [applications]);
+  // Applicant residence, not preferred work state. This keeps the
+  // nationwide candidate pool visible even where SETIA has no branch.
+  const states = useMemo(() => uniqueValues(applications, 'state'), [applications]);
 
   return (
     <header className="bg-white border-b border-slate-200 px-6 py-4 sticky top-0 z-20 shadow-xs">
@@ -63,7 +74,7 @@ export const Header: React.FC<HeaderProps> = ({
 
           <div className="flex items-center gap-1.5 bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-slate-700">
             <MapPin className="w-3.5 h-3.5 text-slate-500" />
-            <span className="font-medium text-slate-500 hidden sm:inline">State:</span>
+            <span className="font-medium text-slate-500 hidden sm:inline">Applicant State:</span>
             <select
               value={filters.state}
               onChange={(e) => setFilters((prev) => ({ ...prev, state: e.target.value }))}
@@ -111,6 +122,13 @@ export const Header: React.FC<HeaderProps> = ({
         </div>
 
         <div className="flex flex-wrap items-center gap-2.5">
+          <NotificationCenter
+            notifications={notifications}
+            unreadCount={unreadNotificationCount}
+            onMarkAllRead={onMarkNotificationsRead}
+            onOpenApplication={onOpenNotification}
+          />
+
           <div className="flex items-center gap-1.5 bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-slate-700">
             <MapPin className="w-3.5 h-3.5 text-slate-500" />
             <span className="font-medium text-slate-500 hidden sm:inline">Branch:</span>

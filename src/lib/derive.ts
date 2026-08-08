@@ -31,7 +31,7 @@ export function filterApplications(apps: Application[], filters: FilterState): A
     if (filters.stage !== 'ALL' && app.stage !== filters.stage) return false;
     if (filters.branch !== 'ALL' && app.preferredBranch !== filters.branch) return false;
     if (filters.position !== 'ALL' && app.position !== filters.position) return false;
-    if (filters.state !== 'ALL' && app.preferredState !== filters.state) return false;
+    if (filters.state !== 'ALL' && app.state !== filters.state) return false;
     if (filters.minRating > 0 && app.rating < filters.minRating) return false;
 
     // Sheet timestamps are "YYYY-MM-DD HH:mm:ss"; the date inputs give

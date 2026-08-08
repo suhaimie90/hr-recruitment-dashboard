@@ -31,6 +31,7 @@ import { Env, SessionUser as User, lookupUser, verifySession } from '../../lib/a
 const READ_ACTIONS = [
   'bootstrap',
   'applications',
+  'notifications',
   'application',
   'activity',
   'interviews',
@@ -470,6 +471,41 @@ async function apiApplications(env: Env, user: User, includeArchived: boolean) {
   };
 }
 
+/**
+ * Lightweight polling feed for the in-app notification bell. Only the
+ * fields needed by the notification UI are selected, and the same role
+ * scope as the main applications endpoint is applied before responding.
+ * With no cursor, return a server-time baseline instead of old records.
+ */
+async function apiNotifications(env: Env, user: User, since: unknown) {
+  const checkedAt = nowIso();
+  const rawSince = String(since ?? '').trim();
+  if (!rawSince) return { result: 'success', data: [], checkedAt };
+
+  const parsedSince = new Date(rawSince);
+  if (Number.isNaN(parsedSince.getTime())) throw new Error('Invalid notification cursor');
+
+  const rows = await select<Row>(
+    env,
+    'applications',
+    'select=application_id,submitted_at,full_name,position,preferred_branch' +
+      `&submitted_at=gt.${enc(parsedSince.toISOString())}` +
+      '&order=submitted_at.desc&limit=50'
+  );
+
+  return {
+    result: 'success',
+    checkedAt,
+    data: rows.filter((row) => canAccessApplication(user, row)).map((row) => ({
+      applicationId: String(row.application_id || ''),
+      submittedAt: String(row.submitted_at || ''),
+      fullName: String(row.full_name || 'New applicant'),
+      position: String(row.position || ''),
+      preferredBranch: String(row.preferred_branch || '')
+    }))
+  };
+}
+
 async function apiApplication(env: Env, user: User, applicationId: unknown) {
   const r = await getScopedApplication(env, user, applicationId);
   const resumeUrl = await resolveResumeUrl(env, r.resume_url);
@@ -892,6 +928,8 @@ export async function forward(
           const include = /^(1|true|yes)$/i.test(raw);
           return { status: 200, body: await apiApplications(env, user, include) };
         }
+        case 'notifications':
+          return { status: 200, body: await apiNotifications(env, user, one(query.since)) };
         case 'application':
           return { status: 200, body: await apiApplication(env, user, one(query.applicationId)) };
         case 'activity':
