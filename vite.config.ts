@@ -81,7 +81,11 @@ function apiDevServer(env: Record<string, string>): Plugin {
         else if (Array.isArray(value)) headers.set(key, value.join(', '));
       }
 
-      const request = new Request(`http://localhost${req.url}`, {
+      // Preserve the browser-visible host and port. OAuth derives its
+      // redirect_uri from request.url, so hard-coding "localhost" here
+      // incorrectly dropped :3000 during local development.
+      const host = req.headers.host || 'localhost:3000';
+      const request = new Request(`http://${host}${req.url}`, {
         method: req.method,
         headers,
         body: chunks.length ? Buffer.concat(chunks) : undefined
