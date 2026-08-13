@@ -100,8 +100,9 @@ create index idx_applications_submitted_at on applications (submitted_at);
 -- =====================================================
 -- USERS
 -- =====================================================
--- Admin and Senior Manager are global by role. For Area Manager,
--- Supervisor and Viewer, NULL/empty assignments mean no access.
+-- Admin and Senior Manager are global by role unless a branch is explicitly
+-- denied in excluded_branches. For Area Manager, Manager, Supervisor and
+-- Viewer, NULL/empty allow assignments mean no access.
 
 create table users (
   email             text primary key
@@ -110,6 +111,7 @@ create table users (
   name              text not null,
   role              text not null default 'Viewer',
   allowed_branches  text[],
+  excluded_branches text[] not null default '{}',
   allowed_positions text[],
   active            boolean not null default true
 );

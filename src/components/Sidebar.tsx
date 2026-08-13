@@ -22,7 +22,9 @@ export const Sidebar: React.FC<SidebarProps> = ({
   totalApplicants,
   interviewCount
 }) => {
-  const canViewAnalytics = user.canViewAnalytics ?? /admin|manager/i.test(user.role);
+  const canViewAnalytics =
+    user.canViewAnalytics ??
+    /^(admin|manager|area manager|senior manager|director|strategic)$/i.test(user.role);
   const navItems = [
     { id: 'pipeline', label: 'Pipeline Board', icon: Kanban, badge: totalApplicants },
     { id: 'candidates', label: 'All Applicants', icon: Users, badge: null },

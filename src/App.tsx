@@ -108,7 +108,9 @@ export default function App() {
   // Prefer what the server resolved. Fall back to the role name only
   // when an older Apps Script deployment doesn't send the field.
   const canEdit = user?.canEdit ?? (user?.role ?? '').toLowerCase() !== 'viewer';
-  const canViewAnalytics = user?.canViewAnalytics ?? /admin|manager/i.test(user?.role ?? '');
+  const canViewAnalytics =
+    user?.canViewAnalytics ??
+    /^(admin|manager|area manager|senior manager|director|strategic)$/i.test(user?.role ?? '');
 
   // ── Session restore ─────────────────────────────────────
   // Identity lives in the HttpOnly cookie Google sign-in set (see

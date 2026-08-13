@@ -101,6 +101,7 @@ export interface AppUser {
   canEdit?: boolean;
   canViewAnalytics?: boolean;
   allowedBranches?: string[];
+  excludedBranches?: string[];
   allowedPositions?: string[];
 }
 

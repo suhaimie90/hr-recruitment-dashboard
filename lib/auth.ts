@@ -25,6 +25,7 @@ export interface SessionUser {
   canEdit: boolean;
   canViewAnalytics: boolean;
   allowedBranches: string[];
+  excludedBranches: string[];
   allowedPositions: string[];
 }
 
@@ -182,7 +183,7 @@ export async function lookupUser(env: Env, email: string | null | undefined): Pr
   if (!normalizedEmail || normalizedEmail.length > 254) return null;
 
   const res = await fetch(
-    `${env.SUPABASE_URL}/rest/v1/users?select=email,name,role,active,allowed_branches,allowed_positions&email=eq.${enc(normalizedEmail)}&limit=1`,
+    `${env.SUPABASE_URL}/rest/v1/users?select=email,name,role,active,allowed_branches,excluded_branches,allowed_positions&email=eq.${enc(normalizedEmail)}&limit=1`,
     {
       headers: {
         apikey: env.SUPABASE_SERVICE_ROLE_KEY,
@@ -199,6 +200,14 @@ export async function lookupUser(env: Env, email: string | null | undefined): Pr
 
   const role = String(match.role || 'Viewer');
   const normalizedRole = role.trim().toLowerCase();
+  const analyticsRoles = new Set([
+    'admin',
+    'manager',
+    'area manager',
+    'senior manager',
+    'director',
+    'strategic'
+  ]);
   const stringArray = (value: unknown) =>
     (Array.isArray(value) ? value : []).map(String).map((item) => item.trim()).filter(Boolean);
 
@@ -207,8 +216,9 @@ export async function lookupUser(env: Env, email: string | null | undefined): Pr
     name: String(match.name || match.email),
     role,
     canEdit: normalizedRole !== 'viewer',
-    canViewAnalytics: /admin|manager|director|strategic/.test(normalizedRole),
+    canViewAnalytics: analyticsRoles.has(normalizedRole),
     allowedBranches: stringArray(match.allowed_branches),
+    excludedBranches: stringArray(match.excluded_branches),
     allowedPositions: stringArray(match.allowed_positions)
   };
 }

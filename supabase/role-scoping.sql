@@ -4,6 +4,11 @@
 alter table public.users
   add column if not exists allowed_positions text[];
 
+-- Optional final-deny list. An empty list excludes nothing. A branch in
+-- this list is hidden even when allowed_branches contains 'ALL'.
+alter table public.users
+  add column if not exists excluded_branches text[] not null default '{}';
+
 -- Admin keeps unrestricted access.
 update public.users
 set allowed_positions = array['ALL']
@@ -33,6 +38,16 @@ where lower(email) = 'tester2@gmail.com';
 --     allowed_branches = array['ALL'],
 --     allowed_positions = array['ALL']
 -- where lower(email) = 'senior.manager@company.com';
+
+-- Example: a Manager can access every outlet except HQ. Dashboard
+-- statistics use the same server-scoped applications, so HQ is also
+-- excluded from that manager's metric cards and analytics charts.
+-- update public.users
+-- set role = 'Manager',
+--     allowed_branches = array['ALL'],
+--     excluded_branches = array['HQ - Jenjarom'],
+--     allowed_positions = array['ALL']
+-- where lower(email) = 'manager@company.com';
 
 -- An Area Manager or Supervisor with NULL/empty allowed_positions sees no
 -- applications until positions are explicitly assigned. Example:

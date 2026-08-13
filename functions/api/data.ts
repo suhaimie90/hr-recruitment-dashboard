@@ -397,9 +397,15 @@ function positionWithinRoleLevel(role: string, position: unknown): boolean {
   return true;
 }
 
-/** Senior Manager and Admin are global; other roles match branch AND position. */
+/**
+ * Branch exclusions are a final deny rule for every role. This supports,
+ * for example, allowedBranches=['ALL'] with excludedBranches=['HQ - Jenjarom'].
+ * Senior Manager and Admin are otherwise global; other roles must match both
+ * their branch and position assignments.
+ */
 function canAccessApplication(user: User, row: Row): boolean {
   const role = scopeValue(user.role);
+  if (hasAssignment(row.preferred_branch, user.excludedBranches)) return false;
   if (role === 'admin' || role === 'senior manager') return true;
   return (
     positionWithinRoleLevel(user.role, row.position) &&
