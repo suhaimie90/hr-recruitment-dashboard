@@ -418,8 +418,9 @@ export default function App() {
       throw new Error('This interview is missing its sheet reference — refresh and try again');
     }
 
-    await cancelInterview(interview.applicationId, interview.rowNumber);
+    const result = await cancelInterview(interview.applicationId, interview.rowNumber);
     setInterviews(await fetchInterviews().catch(() => interviews));
+    if (result.warning) alert(result.warning);
   };
 
   const handleRemoveInterview = async (interview: Interview) => {
@@ -435,8 +436,9 @@ export default function App() {
     applicationId: string,
     data: Parameters<typeof scheduleInterview>[1]
   ) => {
-    await scheduleInterview(applicationId, data);
+    const result = await scheduleInterview(applicationId, data);
     setInterviews(await fetchInterviews().catch(() => interviews));
+    if (result.warning) alert(result.warning);
   };
 
   // ── Render ──────────────────────────────────────────────

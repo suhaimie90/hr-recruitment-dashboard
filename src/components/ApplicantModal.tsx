@@ -774,6 +774,24 @@ export const ApplicantModal: React.FC<ApplicantModalProps> = ({
                               {interview.meetingLink}
                             </p>
                           )}
+                          {interview.calendarEventUrl && interview.calendarSyncStatus === 'Synced' && (
+                            <a
+                              href={interview.calendarEventUrl}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="text-[11px] text-indigo-600 hover:underline mt-0.5 inline-block"
+                            >
+                              Open in Google Calendar
+                            </a>
+                          )}
+                          {interview.calendarSyncStatus === 'Failed' && (
+                            <p
+                              className="text-[11px] text-amber-700 mt-0.5"
+                              title={interview.calendarSyncError || 'Calendar sync failed'}
+                            >
+                              Saved · Calendar sync failed
+                            </p>
+                          )}
                         </div>
                         {/cancel/i.test(interview.status || '') && (
                           <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-rose-50 text-rose-700 border border-rose-200 shrink-0">

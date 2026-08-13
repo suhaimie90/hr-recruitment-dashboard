@@ -154,8 +154,8 @@ export async function cancelInterview(
   applicationId: string,
   rowNumber: number,
   reason?: string
-): Promise<void> {
-  await post('cancelInterview', { applicationId, rowNumber, reason });
+): Promise<{ warning?: string }> {
+  return post<{ warning?: string }>('cancelInterview', { applicationId, rowNumber, reason });
 }
 
 /** Permanently deletes an interview row after a separate confirmation in the UI. */
@@ -196,6 +196,9 @@ export async function scheduleInterview(
     type?: string;
     meetingLink?: string;
   }
-): Promise<void> {
-  await post('scheduleInterview', { applicationId, ...data });
+): Promise<{ calendarSynced: boolean; warning?: string }> {
+  return post<{ calendarSynced: boolean; warning?: string }>('scheduleInterview', {
+    applicationId,
+    ...data
+  });
 }

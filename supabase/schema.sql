@@ -172,6 +172,10 @@ create table interviews (
   type              text not null default 'Interview',
   status            text not null default 'Scheduled',
   meeting_link      text,
+  calendar_event_id text,
+  calendar_event_url text,
+  calendar_sync_status text not null default 'Pending',
+  calendar_sync_error text,
   created_by        text,
   created_at        timestamptz not null default now()
 );

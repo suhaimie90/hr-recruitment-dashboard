@@ -13,6 +13,9 @@
 export interface Env {
   SUPABASE_URL?: string;
   SUPABASE_SERVICE_ROLE_KEY?: string;
+  /** Server-only Apps Script bridge used for Drive and Calendar. */
+  GAS_URL?: string;
+  GAS_TOKEN?: string;
   GOOGLE_CLIENT_ID?: string;
   GOOGLE_CLIENT_SECRET?: string;
   SESSION_SECRET?: string;

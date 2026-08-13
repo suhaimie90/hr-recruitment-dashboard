@@ -84,6 +84,11 @@ export interface Interview {
   type: string;
   /** Meeting link or, for face-to-face, the location. */
   meetingLink: string;
+  /** Google Calendar metadata; Supabase remains the source of truth. */
+  calendarEventId: string;
+  calendarEventUrl: string;
+  calendarSyncStatus: 'Pending' | 'Synced' | 'Failed' | 'Cancelled' | string;
+  calendarSyncError: string;
   /** Sheet row — the Interviews sheet has no ID column of its own. */
   rowNumber?: number;
 }

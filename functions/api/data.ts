@@ -113,6 +113,66 @@ const update = <T>(env: Env, table: string, query: string, patch: unknown) =>
 const remove = (env: Env, table: string, query: string) =>
   sb<null>(env, `${table}?${query}`, { method: 'DELETE' });
 
+type CalendarBridgeResult = {
+  result: string;
+  message?: string;
+  eventId?: string;
+  eventUrl?: string;
+};
+
+/**
+ * Calls Apps Script from Cloudflare only. GAS_TOKEN never reaches the
+ * browser, and a short timeout prevents a Calendar outage from holding
+ * the dashboard request open indefinitely.
+ */
+async function callCalendarBridge(
+  env: Env,
+  payload: Record<string, unknown>
+): Promise<CalendarBridgeResult> {
+  if (!env.GAS_URL || !env.GAS_TOKEN) {
+    throw new Error('Google Calendar bridge is not configured');
+  }
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 15_000);
+
+  try {
+    const res = await fetch(env.GAS_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+      body: JSON.stringify({
+        action: 'calendarInterview',
+        token: env.GAS_TOKEN,
+        ...payload
+      }),
+      redirect: 'follow',
+      signal: controller.signal
+    });
+
+    const text = await res.text();
+    if (!res.ok) throw new Error(`Calendar bridge returned HTTP ${res.status}`);
+
+    let result: CalendarBridgeResult;
+    try {
+      result = JSON.parse(text) as CalendarBridgeResult;
+    } catch {
+      throw new Error('Calendar bridge returned an invalid response');
+    }
+
+    if (result.result !== 'success') {
+      throw new Error(result.message || 'Google Calendar sync failed');
+    }
+    return result;
+  } catch (err) {
+    if (err instanceof Error && err.name === 'AbortError') {
+      throw new Error('Google Calendar sync timed out');
+    }
+    throw err;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
 /**
  * Resumes uploaded through functions/api/submit.ts are stored in a
  * private bucket by object path, not a public URL — a stored signed
@@ -173,6 +233,21 @@ function stamp(value?: string | null): string {
 
   const local = new Date(d.getTime() + TZ_MINUTES * 60_000);
   return local.toISOString().slice(0, 19).replace('T', ' ');
+}
+
+/** Treat a datetime-local value as Malaysian time, not Worker/UTC time. */
+function malaysiaDateTimeIso(value: unknown): string {
+  const raw = String(value ?? '').trim();
+  if (!raw) throw new Error('scheduledAt is required');
+
+  // datetime-local sends no offset. Appending +08:00 preserves the wall
+  // clock time selected by HR when the request runs on Cloudflare UTC.
+  const explicit = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d{1,3})?)?$/.test(raw)
+    ? `${raw}+08:00`
+    : raw;
+  const parsed = new Date(explicit);
+  if (Number.isNaN(parsed.getTime())) throw new Error('Invalid interview date and time');
+  return parsed.toISOString();
 }
 
 const nowIso = () => new Date().toISOString();
@@ -314,6 +389,10 @@ function toInterview(r: Row) {
     type: r.type || '',
     status: r.status || 'Scheduled',
     meetingLink: r.meeting_link || '',
+    calendarEventId: r.calendar_event_id || '',
+    calendarEventUrl: r.calendar_event_url || '',
+    calendarSyncStatus: r.calendar_sync_status || 'Pending',
+    calendarSyncError: r.calendar_sync_error || '',
     // The frontend cancels by rowNumber; the primary key stands in for
     // it, so cancelInterview keeps working unchanged.
     rowNumber: Number(r.id)
@@ -748,22 +827,72 @@ async function apiScheduleInterview(env: Env, user: User, payload: Row) {
     throw new Error('applicationId and scheduledAt are required');
   }
 
-  await getScopedApplication(env, user, applicationId, 'application_id');
+  const application = await getScopedApplication(
+    env,
+    user,
+    applicationId,
+    'application_id,full_name,email,position,preferred_branch'
+  );
+  const scheduledAt = malaysiaDateTimeIso(payload.scheduledAt);
+  const title = sanitize(payload.title) || 'Interview';
+  const durationMinutes = Number(payload.durationMinutes || 45);
+  if (!Number.isFinite(durationMinutes) || durationMinutes < 5 || durationMinutes > 480) {
+    throw new Error('Interview duration must be between 5 and 480 minutes');
+  }
 
-  await insert(env, 'interviews', {
+  // Supabase is the source of truth. Save there first, then sync. A
+  // Calendar outage cannot lose the interview or invite a duplicate.
+  const inserted = await insert<Row>(env, 'interviews', {
     application_id: applicationId,
-    candidate_name: sanitize(payload.candidateName),
-    title: sanitize(payload.title) || 'Interview',
+    candidate_name: sanitize(payload.candidateName) || sanitize(application.full_name),
+    title,
     interviewer: sanitize(payload.interviewer) || user.name,
     interviewer_role: sanitize(payload.interviewerRole) || user.role,
-    scheduled_at: new Date(payload.scheduledAt).toISOString(),
-    duration_minutes: Number(payload.durationMinutes || 45),
+    scheduled_at: scheduledAt,
+    duration_minutes: durationMinutes,
     type: sanitize(payload.type) || 'Interview',
     status: 'Scheduled',
     meeting_link: sanitize(payload.meetingLink),
+    calendar_sync_status: 'Pending',
+    calendar_sync_error: null,
     created_by: user.email,
     created_at: nowIso()
   });
+
+  const interview = inserted[0];
+  if (!interview?.id) throw new Error('Interview was not returned after saving');
+
+  let warning = '';
+  try {
+    const calendar = await callCalendarBridge(env, {
+      operation: 'create',
+      applicationId,
+      candidateName: sanitize(payload.candidateName) || sanitize(application.full_name),
+      candidateEmail: sanitize(application.email),
+      position: sanitize(application.position),
+      branch: sanitize(application.preferred_branch),
+      title,
+      interviewerName: sanitize(payload.interviewer) || user.name,
+      interviewerEmail: user.email,
+      scheduledAt,
+      durationMinutes,
+      type: sanitize(payload.type) || 'Interview',
+      location: sanitize(payload.meetingLink)
+    });
+
+    await update(env, 'interviews', `id=eq.${interview.id}`, {
+      calendar_event_id: calendar.eventId || null,
+      calendar_event_url: calendar.eventUrl || null,
+      calendar_sync_status: 'Synced',
+      calendar_sync_error: null
+    });
+  } catch (err) {
+    warning = err instanceof Error ? err.message : String(err);
+    await update(env, 'interviews', `id=eq.${interview.id}`, {
+      calendar_sync_status: 'Failed',
+      calendar_sync_error: warning.slice(0, 500)
+    });
+  }
 
   await update(env, 'applications', `application_id=eq.${enc(String(applicationId))}`, touch());
 
@@ -772,10 +901,15 @@ async function apiScheduleInterview(env: Env, user: User, payload: Row) {
     user,
     'INTERVIEW_SCHEDULED',
     String(applicationId),
-    `${sanitize(payload.title) || 'Interview'} — ${sanitize(payload.scheduledAt)}`
+    `${title} — ${stamp(scheduledAt)}${warning ? ` | Calendar sync failed: ${warning}` : ''}`
   );
 
-  return { result: 'success', applicationId };
+  return {
+    result: 'success',
+    applicationId,
+    calendarSynced: !warning,
+    warning: warning ? `Interview saved, but Google Calendar was not updated: ${warning}` : undefined
+  };
 }
 
 async function apiCancelInterview(env: Env, user: User, payload: Row) {
@@ -789,7 +923,7 @@ async function apiCancelInterview(env: Env, user: User, payload: Row) {
   const rows = await select<Row>(
     env,
     'interviews',
-    `select=id,application_id,status,title&id=eq.${rowNumber}&limit=1`
+    `select=id,application_id,status,title,calendar_event_id&id=eq.${rowNumber}&limit=1`
   );
 
   const interview = rows[0];
@@ -806,6 +940,26 @@ async function apiCancelInterview(env: Env, user: User, payload: Row) {
   }
 
   await update(env, 'interviews', `id=eq.${rowNumber}`, { status: 'Cancelled' });
+
+  let warning = '';
+  if (interview.calendar_event_id) {
+    try {
+      await callCalendarBridge(env, {
+        operation: 'delete',
+        calendarEventId: interview.calendar_event_id
+      });
+      await update(env, 'interviews', `id=eq.${rowNumber}`, {
+        calendar_sync_status: 'Cancelled',
+        calendar_sync_error: null
+      });
+    } catch (err) {
+      warning = err instanceof Error ? err.message : String(err);
+      await update(env, 'interviews', `id=eq.${rowNumber}`, {
+        calendar_sync_status: 'Failed',
+        calendar_sync_error: warning.slice(0, 500)
+      });
+    }
+  }
   await update(env, 'applications', `application_id=eq.${enc(String(applicationId))}`, touch());
 
   await writeAudit(
@@ -816,7 +970,12 @@ async function apiCancelInterview(env: Env, user: User, payload: Row) {
     `${interview.title || 'Interview'}${payload.reason ? ` | ${sanitize(payload.reason)}` : ''}`
   );
 
-  return { result: 'success', applicationId };
+  return {
+    result: 'success',
+    applicationId,
+    calendarSynced: !warning,
+    warning: warning ? `Interview cancelled, but its Calendar event could not be removed: ${warning}` : undefined
+  };
 }
 
 async function apiRemoveInterview(env: Env, user: User, payload: Row) {
@@ -830,12 +989,21 @@ async function apiRemoveInterview(env: Env, user: User, payload: Row) {
   const rows = await select<Row>(
     env,
     'interviews',
-    `select=id,application_id,title&id=eq.${rowNumber}&limit=1`
+    `select=id,application_id,title,calendar_event_id&id=eq.${rowNumber}&limit=1`
   );
   const interview = rows[0];
   if (!interview) throw new Error('That interview no longer exists — refresh and try again');
   if (String(interview.application_id) !== String(applicationId)) {
     throw new Error('The interview list is out of date — refresh the page and try again');
+  }
+
+  // Delete the external event first. If Calendar is unavailable, keep
+  // the Supabase row so HR can retry instead of leaving an orphan event.
+  if (interview.calendar_event_id) {
+    await callCalendarBridge(env, {
+      operation: 'delete',
+      calendarEventId: interview.calendar_event_id
+    });
   }
 
   await remove(env, 'interviews', `id=eq.${rowNumber}`);

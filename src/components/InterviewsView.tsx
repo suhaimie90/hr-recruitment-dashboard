@@ -170,6 +170,24 @@ const Section: React.FC<{
                         <span className="truncate max-w-[280px]">{interview.meetingLink}</span>
                       </p>
                     )}
+                    {interview.calendarEventUrl && interview.calendarSyncStatus === 'Synced' && (
+                      <a
+                        href={interview.calendarEventUrl}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="text-xs text-indigo-600 hover:underline mt-1 inline-block"
+                      >
+                        Open in Google Calendar
+                      </a>
+                    )}
+                    {interview.calendarSyncStatus === 'Failed' && (
+                      <p
+                        className="text-[11px] text-amber-700 mt-1"
+                        title={interview.calendarSyncError || 'Calendar sync failed'}
+                      >
+                        Saved in dashboard · Calendar sync failed
+                      </p>
+                    )}
                   </div>
                 </div>
 
