@@ -121,6 +121,43 @@ type CalendarBridgeResult = {
 };
 
 /**
+ * Apps Script ContentService answers through a Google-hosted redirect.
+ * Cloudflare's automatic redirect handling can occasionally re-request
+ * the /exec URL as GET and stall. Follow only Google's redirect target
+ * explicitly, with a small bounded redirect count.
+ */
+async function fetchAppsScriptResponse(
+  url: string,
+  init: RequestInit,
+  signal: AbortSignal
+): Promise<Response> {
+  let currentUrl = url;
+  let currentInit: RequestInit = { ...init, redirect: 'manual', signal };
+
+  for (let redirects = 0; redirects <= 3; redirects++) {
+    const res = await fetch(currentUrl, currentInit);
+    if (![301, 302, 303, 307, 308].includes(res.status)) return res;
+
+    const location = res.headers.get('Location');
+    if (!location) throw new Error('Calendar bridge redirect had no destination');
+
+    const next = new URL(location, currentUrl);
+    const googleHost =
+      next.protocol === 'https:' &&
+      (next.hostname === 'script.google.com' || next.hostname.endsWith('.googleusercontent.com'));
+    if (!googleHost) throw new Error('Calendar bridge returned an unexpected redirect');
+
+    currentUrl = next.toString();
+    const preservePost = res.status === 307 || res.status === 308;
+    currentInit = preservePost
+      ? { ...init, redirect: 'manual', signal }
+      : { method: 'GET', redirect: 'manual', signal };
+  }
+
+  throw new Error('Calendar bridge returned too many redirects');
+}
+
+/**
  * Calls Apps Script from Cloudflare only. GAS_TOKEN never reaches the
  * browser, and a short timeout prevents a Calendar outage from holding
  * the dashboard request open indefinitely.
@@ -140,7 +177,7 @@ async function callCalendarBridge(
   const timeout = setTimeout(() => controller.abort(), 45_000);
 
   try {
-    const res = await fetch(env.GAS_URL, {
+    const res = await fetchAppsScriptResponse(env.GAS_URL, {
       method: 'POST',
       headers: { 'Content-Type': 'text/plain;charset=utf-8' },
       body: JSON.stringify({
@@ -148,9 +185,7 @@ async function callCalendarBridge(
         token: env.GAS_TOKEN,
         ...payload
       }),
-      redirect: 'follow',
-      signal: controller.signal
-    });
+    }, controller.signal);
 
     const text = await res.text();
     if (!res.ok) throw new Error(`Calendar bridge returned HTTP ${res.status}`);
