@@ -134,7 +134,10 @@ async function callCalendarBridge(
   }
 
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 15_000);
+  // Calendar creation with sendInvites can take longer than a normal
+  // Apps Script call because Google also prepares guest invitations.
+  // The GAS side is idempotent by interviewId, so a retry is safe.
+  const timeout = setTimeout(() => controller.abort(), 45_000);
 
   try {
     const res = await fetch(env.GAS_URL, {
@@ -866,6 +869,7 @@ async function apiScheduleInterview(env: Env, user: User, payload: Row) {
   try {
     const calendar = await callCalendarBridge(env, {
       operation: 'create',
+      interviewId: interview.id,
       applicationId,
       candidateName: sanitize(payload.candidateName) || sanitize(application.full_name),
       candidateEmail: sanitize(application.email),
