@@ -152,6 +152,7 @@ export const ApplicantModal: React.FC<ApplicantModalProps> = ({
   const interviewTypes = settings['InterviewType'] || ['Screening', 'Technical', 'Final'];
   const rejectionReasons = settings['RejectionReason'] || [
     'Did not show up',
+    'Did Not Attend Scheduled Interview',
     'Declined offer',
     'Failed assessment',
     'Position filled',
