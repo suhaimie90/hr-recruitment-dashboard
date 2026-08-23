@@ -179,7 +179,7 @@ export function isRejectedStage(stage: string): boolean {
 /**
  * Hired and Rejected are conclusions. The dashboard won't move a
  * candidate out of them — an admin corrects the Stage column in the
- * spreadsheet if one was recorded by mistake.
+ * database if one was recorded by mistake.
  */
 export function isDecidedStage(stage: string): boolean {
   return isHiredStage(stage) || isRejectedStage(stage);
@@ -188,7 +188,7 @@ export function isDecidedStage(stage: string): boolean {
 /**
  * Working stages move freely in both directions — sending someone back
  * for another interview is legitimate. Only Hired and Rejected lock,
- * and undoing those needs an administrator in the spreadsheet.
+ * and undoing those needs an administrator in the database.
  *
  * Mirrors the rule Apps Script enforces; this just greys out the
  * controls so nobody discovers it via an error message.

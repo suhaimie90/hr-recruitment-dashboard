@@ -94,7 +94,7 @@ export const KanbanBoard: React.FC<KanbanBoardProps> = ({
                           title={
                             showingArchived
                               ? 'Put back on the board'
-                              : 'Remove from the board (kept in the spreadsheet)'
+                              : 'Remove from the board (demo record retained)'
                           }
                           className="p-1 -mt-1 -mr-1 text-slate-300 hover:text-rose-600 hover:bg-rose-50 rounded transition-colors cursor-pointer shrink-0"
                         >
@@ -172,7 +172,7 @@ export const KanbanBoard: React.FC<KanbanBoardProps> = ({
                             !canEdit
                               ? 'Read-only access'
                               : isDecidedStage(app.stage)
-                                ? `${app.stage} is final — correct it in the spreadsheet`
+                                ? `${app.stage} is final — correct it in the demo database`
                                 : 'Move forward to another stage'
                           }
                         >

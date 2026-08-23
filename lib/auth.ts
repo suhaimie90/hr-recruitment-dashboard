@@ -16,8 +16,9 @@ export interface Env {
   /** Server-only Apps Script bridge used for Drive and Calendar. */
   GAS_URL?: string;
   GAS_TOKEN?: string;
-  GOOGLE_CLIENT_ID?: string;
-  GOOGLE_CLIENT_SECRET?: string;
+  DEMO_EMAIL?: string;
+  DEMO_PASSWORD?: string;
+  DEMO_MODE?: string;
   SESSION_SECRET?: string;
 }
 
@@ -33,8 +34,9 @@ export interface SessionUser {
 }
 
 const SESSION_COOKIE = 'th_session';
-const STATE_COOKIE = 'th_oauth_state';
-const SESSION_MAX_AGE_SECONDS = 7 * 24 * 60 * 60;
+const SESSION_MAX_AGE_SECONDS = 8 * 60 * 60;
+const JWT_ISSUER = 'talentflow-demo';
+const JWT_AUDIENCE = 'talentflow-dashboard';
 
 const enc = encodeURIComponent;
 const textEncoder = new TextEncoder();
@@ -73,16 +75,15 @@ export function parseCookies(header: string | null | undefined): Record<string, 
 }
 
 function buildCookie(name: string, value: string, maxAgeSeconds: number): string {
-  return `${name}=${enc(value)}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=${maxAgeSeconds}`;
+  return `${name}=${enc(value)}; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=${maxAgeSeconds}`;
 }
 
-// ── HMAC session signing ────────────────────────────────
+// ── HS256 JWT session signing ───────────────────────────
 //
-// A signed, HttpOnly cookie rather than a JWT library — Workers'
-// built-in Web Crypto (crypto.subtle) already does correct HMAC-SHA256
-// sign/verify, so a dependency buys nothing here. Payload is just
-// {email, exp}; there is no refresh, a user simply re-authenticates
-// with Google after SESSION_MAX_AGE_SECONDS.
+// Workers' built-in Web Crypto already implements HMAC-SHA256, so a
+// JWT dependency would add bundle weight without improving this small,
+// fixed algorithm implementation. The token is never exposed to the
+// React app; it travels only in the HttpOnly session cookie.
 
 async function hmacKey(secret: string): Promise<CryptoKey> {
   return crypto.subtle.importKey(
@@ -94,17 +95,26 @@ async function hmacKey(secret: string): Promise<CryptoKey> {
   );
 }
 
-/** Signs {email, exp} into "<payload>.<signature>", both base64url. */
+/** Issues a compact HS256 JWT for the configured demo account. */
 export async function signSession(email: string, env: Env): Promise<string> {
   if (!env.SESSION_SECRET) throw new Error('SESSION_SECRET is not set');
 
-  const exp = Date.now() + SESSION_MAX_AGE_SECONDS * 1000;
-  const payload = b64urlEncode(textEncoder.encode(JSON.stringify({ email, exp })));
+  const now = Math.floor(Date.now() / 1000);
+  const header = b64urlEncode(textEncoder.encode(JSON.stringify({ alg: 'HS256', typ: 'JWT' })));
+  const payload = b64urlEncode(textEncoder.encode(JSON.stringify({
+    sub: email,
+    email,
+    iat: now,
+    exp: now + SESSION_MAX_AGE_SECONDS,
+    iss: JWT_ISSUER,
+    aud: JWT_AUDIENCE
+  })));
+  const signingInput = `${header}.${payload}`;
 
   const key = await hmacKey(env.SESSION_SECRET);
-  const signature = await crypto.subtle.sign('HMAC', key, textEncoder.encode(payload));
+  const signature = await crypto.subtle.sign('HMAC', key, textEncoder.encode(signingInput));
 
-  return `${payload}.${b64urlEncode(new Uint8Array(signature))}`;
+  return `${signingInput}.${b64urlEncode(new Uint8Array(signature))}`;
 }
 
 /**
@@ -121,24 +131,37 @@ export async function verifySession(
   const cookieValue = parseCookies(cookieHeader)[SESSION_COOKIE];
   if (!cookieValue || !env.SESSION_SECRET) return null;
 
-  const dot = cookieValue.indexOf('.');
-  if (dot === -1) return null;
-
-  const payload = cookieValue.slice(0, dot);
-  const signature = cookieValue.slice(dot + 1);
+  const parts = cookieValue.split('.');
+  if (parts.length !== 3) return null;
+  const [header, payload, signature] = parts;
+  const signingInput = `${header}.${payload}`;
 
   try {
+    const parsedHeader = JSON.parse(new TextDecoder().decode(b64urlDecode(header)));
+    if (parsedHeader.alg !== 'HS256' || parsedHeader.typ !== 'JWT') return null;
+
     const key = await hmacKey(env.SESSION_SECRET);
     const valid = await crypto.subtle.verify(
       'HMAC',
       key,
       b64urlDecode(signature),
-      textEncoder.encode(payload)
+      textEncoder.encode(signingInput)
     );
     if (!valid) return null;
 
-    const { email, exp } = JSON.parse(new TextDecoder().decode(b64urlDecode(payload)));
-    if (typeof email !== 'string' || typeof exp !== 'number' || Date.now() > exp) return null;
+    const { sub, email, exp, iss, aud } = JSON.parse(
+      new TextDecoder().decode(b64urlDecode(payload))
+    );
+    const now = Math.floor(Date.now() / 1000);
+    if (
+      typeof sub !== 'string' ||
+      typeof email !== 'string' ||
+      sub !== email ||
+      typeof exp !== 'number' ||
+      now >= exp ||
+      iss !== JWT_ISSUER ||
+      aud !== JWT_AUDIENCE
+    ) return null;
 
     return email;
   } catch {
@@ -149,35 +172,12 @@ export async function verifySession(
 }
 
 export const sessionSetCookie = (value: string) => buildCookie(SESSION_COOKIE, value, SESSION_MAX_AGE_SECONDS);
-export const sessionClearCookie = () => `${SESSION_COOKIE}=; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=0`;
-
-// ── OAuth CSRF state cookie (short-lived, handshake only) ──
-
-export const stateSetCookie = (state: string) => buildCookie(STATE_COOKIE, state, 600);
-export const stateClearCookie = () => `${STATE_COOKIE}=; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=0`;
-export const stateCookieFromRequest = (request: Request) =>
-  parseCookies(request.headers.get('Cookie'))[STATE_COOKIE] || null;
-
-export const randomState = () => b64urlEncode(crypto.getRandomValues(new Uint8Array(24)));
-
-/**
- * Decodes (does NOT verify the signature of) a JWT's payload. Safe
- * specifically because the id_token was fetched directly from Google's
- * Token Endpoint over TLS, authenticated with GOOGLE_CLIENT_SECRET —
- * per OpenID Connect Core §3.1.3.7, signature re-verification may be
- * skipped for tokens obtained this way. Callers must still check
- * exp/aud/iss/email_verified themselves.
- */
-export function decodeIdTokenPayload(idToken: string): Record<string, unknown> {
-  const parts = idToken.split('.');
-  if (parts.length < 2) throw new Error('Malformed id_token');
-  return JSON.parse(new TextDecoder().decode(b64urlDecode(parts[1])));
-}
+export const sessionClearCookie = () => `${SESSION_COOKIE}=; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=0`;
 
 // ── Supabase `users` table — the authorization allowlist ───
 //
-// Google only proves WHO is signing in; this is what decides whether
-// they're allowed in, same check the old email-only login did.
+// The demo credential proves who signed in; this table remains the
+// authorization allowlist and source of role/branch permissions.
 
 export async function lookupUser(env: Env, email: string | null | undefined): Promise<SessionUser | null> {
   if (!email || !env.SUPABASE_URL || !env.SUPABASE_SERVICE_ROLE_KEY) return null;

@@ -86,7 +86,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
           Data Source
         </div>
         <div className="px-3 py-2 text-[11px] text-slate-500 leading-relaxed">
-          Applications sync live from the Google Sheet fed by the public careers form.
+          Synthetic portfolio data served securely from the isolated demo database.
         </div>
       </nav>
 

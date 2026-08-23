@@ -1,10 +1,7 @@
 /**
  * Cloudflare Pages Function — the dashboard API, backed by Supabase.
  *
- * Serves /api/data. This is the replacement for /api/gas: same actions,
- * same request and response shapes, so src/services/api.ts only has to
- * change which URL it points at. /api/gas is left in place until the
- * cutover is proven, which is what makes rolling back a one-line edit.
+ * Serves /api/data as the authenticated Supabase data boundary.
  *
  * Talks to PostgREST over plain fetch rather than @supabase/supabase-js.
  * The Workers runtime has no raw TCP sockets, and the REST interface is
@@ -18,9 +15,8 @@
  * The service_role key bypasses row level security, which is why it
  * lives here and never reaches the browser — same perimeter the
  * GAS_TOKEN had. Authorisation is enforced below, in requireUser and
- * requireWriteAccess. requireUser trusts the signed session cookie set
- * by functions/api/auth/callback.ts, not anything the client sends —
- * see lib/auth.ts for the Google OAuth login flow.
+ * requireWriteAccess. requireUser trusts the JWT session cookie set by
+ * functions/api/auth/login.ts, not an identity claimed by the client.
  *
  * `forward` is exported so vite.config.ts can serve an identical
  * /api/data locally without a second copy of the logic.
@@ -289,6 +285,7 @@ function malaysiaDateTimeIso(value: unknown): string {
 }
 
 const nowIso = () => new Date().toISOString();
+const isDemoMode = (env: Env) => /^(1|true|yes)$/i.test(String(env.DEMO_MODE || ''));
 
 const isDecidedStage = (stage: unknown) => /hired|rejected/i.test(String(stage ?? ''));
 
@@ -316,11 +313,9 @@ function requirePositiveSafeInteger(value: unknown, field: string): number {
 // ── auth ────────────────────────────────────────────────
 
 /**
- * Identifies the caller from the signed session cookie set by
- * functions/api/auth/callback.ts after Google sign-in — the client can
- * no longer just claim an email in the request body/query. lookupUser
- * still enforces the Supabase `users` table as the authorization
- * allowlist, exactly as before.
+ * Identifies the caller from the signed JWT cookie set by demo login.
+ * The client cannot claim an email in the request body/query; lookupUser
+ * enforces the Supabase `users` authorization allowlist on every call.
  */
 async function requireUser(env: Env, cookieHeader: string | null): Promise<User> {
   const email = await verifySession(cookieHeader, env);
@@ -901,8 +896,15 @@ async function apiScheduleInterview(env: Env, user: User, payload: Row) {
   if (!interview?.id) throw new Error('Interview was not returned after saving');
 
   let warning = '';
-  try {
-    const calendar = await callCalendarBridge(env, {
+  let calendarSynced = false;
+  if (isDemoMode(env)) {
+    await update(env, 'interviews', `id=eq.${interview.id}`, {
+      calendar_sync_status: 'Demo',
+      calendar_sync_error: null
+    });
+  } else {
+    try {
+      const calendar = await callCalendarBridge(env, {
       operation: 'create',
       interviewId: interview.id,
       applicationId,
@@ -919,18 +921,20 @@ async function apiScheduleInterview(env: Env, user: User, payload: Row) {
       location: sanitize(payload.meetingLink)
     });
 
-    await update(env, 'interviews', `id=eq.${interview.id}`, {
-      calendar_event_id: calendar.eventId || null,
-      calendar_event_url: calendar.eventUrl || null,
-      calendar_sync_status: 'Synced',
-      calendar_sync_error: null
-    });
-  } catch (err) {
-    warning = err instanceof Error ? err.message : String(err);
-    await update(env, 'interviews', `id=eq.${interview.id}`, {
-      calendar_sync_status: 'Failed',
-      calendar_sync_error: warning.slice(0, 500)
-    });
+      await update(env, 'interviews', `id=eq.${interview.id}`, {
+        calendar_event_id: calendar.eventId || null,
+        calendar_event_url: calendar.eventUrl || null,
+        calendar_sync_status: 'Synced',
+        calendar_sync_error: null
+      });
+      calendarSynced = true;
+    } catch (err) {
+      warning = err instanceof Error ? err.message : String(err);
+      await update(env, 'interviews', `id=eq.${interview.id}`, {
+        calendar_sync_status: 'Failed',
+        calendar_sync_error: warning.slice(0, 500)
+      });
+    }
   }
 
   await update(env, 'applications', `application_id=eq.${enc(String(applicationId))}`, touch());
@@ -946,7 +950,7 @@ async function apiScheduleInterview(env: Env, user: User, payload: Row) {
   return {
     result: 'success',
     applicationId,
-    calendarSynced: !warning,
+    calendarSynced,
     warning: warning ? `Interview saved, but Google Calendar was not updated: ${warning}` : undefined
   };
 }
@@ -981,7 +985,7 @@ async function apiCancelInterview(env: Env, user: User, payload: Row) {
   await update(env, 'interviews', `id=eq.${rowNumber}`, { status: 'Cancelled' });
 
   let warning = '';
-  if (interview.calendar_event_id) {
+  if (interview.calendar_event_id && !isDemoMode(env)) {
     try {
       await callCalendarBridge(env, {
         operation: 'delete',
@@ -1038,7 +1042,7 @@ async function apiRemoveInterview(env: Env, user: User, payload: Row) {
 
   // Delete the external event first. If Calendar is unavailable, keep
   // the Supabase row so HR can retry instead of leaving an orphan event.
-  if (interview.calendar_event_id) {
+  if (interview.calendar_event_id && !isDemoMode(env)) {
     await callCalendarBridge(env, {
       operation: 'delete',
       calendarEventId: interview.calendar_event_id

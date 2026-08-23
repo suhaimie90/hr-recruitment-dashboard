@@ -147,7 +147,7 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ analytics, applica
             Recruitment Analytics
           </h2>
           <p className="text-xs text-slate-500 mt-0.5">
-            Computed live from the applications sheet — reflects the filters you have applied.
+            Computed live from synthetic demo records — reflects the filters you have applied.
           </p>
         </div>
 

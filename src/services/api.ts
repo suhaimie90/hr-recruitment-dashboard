@@ -16,13 +16,9 @@ import {
  * backed by Supabase. Nothing here holds a key, and nothing here talks
  * to the database directly — the service_role key stays server-side.
  *
- * The previous backend is still deployed at /api/gas (Apps Script via
- * a token proxy). Rolling back is this one line, which is why it was
- * left in place rather than deleted.
- *
- * Identity travels via the HttpOnly session cookie Google sign-in sets
- * (see functions/api/auth/), not anything sent from here — same-origin
- * fetches include it automatically, and JS can't read or forge it.
+ * Identity travels via the HttpOnly JWT cookie demo login sets (see
+ * functions/api/auth/), not anything sent from here. Same-origin
+ * fetches include it automatically, and JS cannot read or forge it.
  */
 const ENDPOINT = '/api/data';
 
@@ -58,6 +54,20 @@ async function post<T>(action: string, payload: Record<string, unknown> = {}): P
 /** Checks the session cookie and returns the signed-in account, or throws. */
 export async function fetchBootstrap(): Promise<{ user: AppUser; settings: Settings }> {
   return get<{ user: AppUser; settings: Settings }>('bootstrap');
+}
+
+/** Authenticates the shared public-demo account and sets its HttpOnly JWT cookie. */
+export async function login(email: string, password: string): Promise<AppUser> {
+  const res = await fetch('/api/auth/login', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email, password })
+  });
+  const json = await res.json();
+  if (!res.ok || json.result !== 'success') {
+    throw new Error(json.message || 'Demo sign-in failed');
+  }
+  return json.user as AppUser;
 }
 
 /** Clears the session cookie server-side. */

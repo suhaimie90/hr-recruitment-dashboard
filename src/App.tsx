@@ -19,6 +19,7 @@ const AnalyticsView = lazy(() =>
 
 import {
   fetchBootstrap,
+  login,
   logout,
   fetchApplications,
   fetchApplication,
@@ -44,12 +45,6 @@ import {
 } from './types';
 
 import { computeAnalytics, filterApplications } from './lib/derive';
-
-/** Matches the "?error=" values functions/api/auth/callback.ts redirects with. */
-const OAUTH_ERROR_MESSAGES: Record<string, string> = {
-  unauthorized_user: 'That Google account is not registered here. Contact MIS for access.',
-  oauth_failed: 'Google sign-in did not complete. Please try again.'
-};
 
 export default function App() {
   // Session
@@ -113,18 +108,9 @@ export default function App() {
     /^(admin|manager|area manager|senior manager|director|strategic)$/i.test(user?.role ?? '');
 
   // ── Session restore ─────────────────────────────────────
-  // Identity lives in the HttpOnly cookie Google sign-in set (see
-  // functions/api/auth/callback.ts) — nothing to read client-side,
+  // Identity lives in the HttpOnly JWT cookie demo login sets — nothing to read client-side,
   // just ask the server whether that cookie is still valid.
   useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    const oauthError = params.get('error');
-
-    if (oauthError) {
-      setLoginError(OAUTH_ERROR_MESSAGES[oauthError] || 'Sign in failed.');
-      window.history.replaceState(null, '', window.location.pathname);
-    }
-
     fetchBootstrap()
       .then(({ user: verified, settings: fetched }) => {
         setUser(verified);
@@ -135,6 +121,14 @@ export default function App() {
       })
       .finally(() => setIsRestoringSession(false));
   }, []);
+
+  const handleLogin = async (email: string, password: string) => {
+    setLoginError(null);
+    await login(email, password);
+    const { user: verified, settings: fetched } = await fetchBootstrap();
+    setUser(verified);
+    setSettings(fetched);
+  };
 
   const handleLogout = async () => {
     try {
@@ -165,7 +159,7 @@ export default function App() {
       setArchiveAfterDays(apps.archiveAfterDays);
       setInterviews(ints);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to load data from Google Sheets.');
+      setError(err instanceof Error ? err.message : 'Failed to load demo data.');
     } finally {
       setIsLoading(false);
     }
@@ -391,7 +385,7 @@ export default function App() {
     if (
       !window.confirm(
         `${verb === 'remove' ? 'Remove' : 'Restore'} ${app.fullName}${
-          verb === 'remove' ? ' from the board? The row stays in the spreadsheet.' : ' to the board?'
+          verb === 'remove' ? ' from the board? The demo record is retained.' : ' to the board?'
         }`
       )
     ) {
@@ -452,7 +446,7 @@ export default function App() {
   }
 
   if (!user) {
-    return <LoginScreen error={loginError} />;
+    return <LoginScreen error={loginError} onLogin={handleLogin} />;
   }
 
   return (
@@ -548,7 +542,7 @@ export default function App() {
               {isLoading && applications.length === 0 ? (
                 <div className="flex flex-col items-center justify-center py-20 text-slate-400">
                   <Loader2 className="w-8 h-8 animate-spin text-indigo-600 mb-2" />
-                  <p className="text-xs font-semibold">Loading applications from Google Sheets…</p>
+                  <p className="text-xs font-semibold">Loading synthetic demo applications…</p>
                 </div>
               ) : activeTab === 'pipeline' ? (
                 <KanbanBoard

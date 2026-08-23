@@ -1,42 +1,63 @@
 /**
- * Cloudflare Pages Function — starts the Google sign-in redirect.
+ * Cloudflare Pages Function — authenticates the public demo account.
  *
- * Serves /api/auth/login. GET only: this is a plain link/navigation
- * from LoginScreen, not a fetch call.
+ * Serves POST /api/auth/login. Credentials are deployment variables;
+ * the issued JWT is stored in an HttpOnly cookie and never returned to
+ * client-side JavaScript.
  */
 
-import { Env, randomState, stateSetCookie } from '../../../lib/auth';
+import { Env, lookupUser, sessionSetCookie, signSession } from '../../../lib/auth';
 
-const GOOGLE_AUTH_URL = 'https://accounts.google.com/o/oauth2/v2/auth';
+function json(status: number, body: unknown, cookie?: string): Response {
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+  if (cookie) headers['Set-Cookie'] = cookie;
+  return new Response(JSON.stringify(body), { status, headers });
+}
+
+function sameValue(actual: string, expected: string): boolean {
+  const a = new TextEncoder().encode(actual);
+  const b = new TextEncoder().encode(expected);
+  const length = Math.max(a.length, b.length);
+  let difference = a.length ^ b.length;
+  for (let i = 0; i < length; i++) difference |= (a[i] || 0) ^ (b[i] || 0);
+  return difference === 0;
+}
 
 export async function onRequest(context: { request: Request; env: Env }): Promise<Response> {
   const { request, env } = context;
 
-  if (!env.GOOGLE_CLIENT_ID) {
-    return new Response('GOOGLE_CLIENT_ID is not set on this deployment.', { status: 500 });
+  if (request.method !== 'POST') {
+    return json(405, { result: 'error', message: 'Method not allowed' });
   }
 
-  const url = new URL(request.url);
-  // Same origin the browser is actually on (preview URL, custom domain,
-  // localhost) — must exactly match an Authorized redirect URI
-  // registered on the Google OAuth client.
-  const redirectUri = `${url.origin}/api/auth/callback`;
-  const state = randomState();
+  if (!/^(1|true|yes)$/i.test(String(env.DEMO_MODE || ''))) {
+    return json(403, { result: 'error', message: 'Demo login is disabled.' });
+  }
 
-  const params = new URLSearchParams({
-    client_id: env.GOOGLE_CLIENT_ID,
-    redirect_uri: redirectUri,
-    response_type: 'code',
-    scope: 'openid email profile',
-    state,
-    prompt: 'select_account'
-  });
+  if (!env.DEMO_EMAIL || !env.DEMO_PASSWORD || !env.SESSION_SECRET) {
+    return json(500, { result: 'error', message: 'Demo login is not configured.' });
+  }
 
-  return new Response(null, {
-    status: 302,
-    headers: {
-      Location: `${GOOGLE_AUTH_URL}?${params.toString()}`,
-      'Set-Cookie': stateSetCookie(state)
-    }
-  });
+  let body: Record<string, unknown>;
+  try {
+    body = (await request.json()) as Record<string, unknown>;
+  } catch {
+    return json(400, { result: 'error', message: 'Invalid request body' });
+  }
+
+  const email = String(body.email || '').trim().toLowerCase();
+  const password = String(body.password || '');
+  const expectedEmail = env.DEMO_EMAIL.trim().toLowerCase();
+
+  if (!sameValue(email, expectedEmail) || !sameValue(password, env.DEMO_PASSWORD)) {
+    return json(401, { result: 'error', message: 'Invalid demo email or password.' });
+  }
+
+  const user = await lookupUser(env, expectedEmail);
+  if (!user) {
+    return json(403, { result: 'error', message: 'The demo user is missing or inactive.' });
+  }
+
+  const token = await signSession(user.email, env);
+  return json(200, { result: 'success', user }, sessionSetCookie(token));
 }

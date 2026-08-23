@@ -391,8 +391,8 @@ export const ApplicantModal: React.FC<ApplicantModalProps> = ({
                         Recorded as <span className="font-bold">{application.stage}</span>.
                       </p>
                       <p className="text-[11px] text-slate-400">
-                        This is final. To change it, edit the Stage column in the
-                        spreadsheet.
+                        This is final. To change it, edit the synthetic record in the
+                        demo database.
                       </p>
                     </div>
                   ) : !canEdit ? (

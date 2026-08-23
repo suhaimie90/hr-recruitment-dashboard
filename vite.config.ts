@@ -4,20 +4,17 @@ import path from 'path';
 import { defineConfig, loadEnv, type Plugin, type ViteDevServer } from 'vite';
 // Same implementation the deployed Pages Functions use, so local dev
 // and production can't drift.
-import { forward } from './functions/api/gas';
 import { forward as forwardData } from './functions/api/data';
 // These export onRequest directly rather than a forward() — they need
 // the raw Request (for request.json(), redirects, or Set-Cookie),
 // which doesn't fit the (method, query, body) shape the other two use.
 import { onRequest as submitOnRequest } from './functions/api/submit';
 import { onRequest as authLoginOnRequest } from './functions/api/auth/login';
-import { onRequest as authCallbackOnRequest } from './functions/api/auth/callback';
 import { onRequest as authLogoutOnRequest } from './functions/api/auth/logout';
 
 /**
- * Vercel serverless functions don't run under `vite dev`, so this
- * plugin serves /api/gas locally using the exact same forwarding code
- * the deployed function uses. Local and production stay in step.
+ * Cloudflare Pages Functions don't run under `vite dev`, so this plugin
+ * mounts their handlers locally. Local and production stay in step.
  */
 function apiDevServer(env: Record<string, string>): Plugin {
   // Both routes read the request the same way; only the handler and
@@ -81,9 +78,8 @@ function apiDevServer(env: Record<string, string>): Plugin {
         else if (Array.isArray(value)) headers.set(key, value.join(', '));
       }
 
-      // Preserve the browser-visible host and port. OAuth derives its
-      // redirect_uri from request.url, so hard-coding "localhost" here
-      // incorrectly dropped :3000 during local development.
+      // Preserve the browser-visible host and port for same-origin
+      // cookie behavior during local development.
       const host = req.headers.host || 'localhost:3000';
       const request = new Request(`http://${host}${req.url}`, {
         method: req.method,
@@ -110,23 +106,20 @@ function apiDevServer(env: Record<string, string>): Plugin {
   return {
     name: 'api-dev',
     configureServer(server) {
-      // Legacy Apps Script proxy — kept until the Supabase cutover is
-      // proven, so rolling back is a one-line change in api.ts.
-      mount(server, '/api/gas', (method, query, body) =>
-        forward(method, query, body, { GAS_URL: env.GAS_URL, GAS_TOKEN: env.GAS_TOKEN })
-      );
-
       const dataEnv = {
         SUPABASE_URL: env.SUPABASE_URL,
         SUPABASE_SERVICE_ROLE_KEY: env.SUPABASE_SERVICE_ROLE_KEY,
         GAS_URL: env.GAS_URL,
-        GAS_TOKEN: env.GAS_TOKEN
+        GAS_TOKEN: env.GAS_TOKEN,
+        DEMO_MODE: env.DEMO_MODE,
+        SESSION_SECRET: env.SESSION_SECRET
       };
 
       const authEnv = {
         ...dataEnv,
-        GOOGLE_CLIENT_ID: env.GOOGLE_CLIENT_ID,
-        GOOGLE_CLIENT_SECRET: env.GOOGLE_CLIENT_SECRET,
+        DEMO_EMAIL: env.DEMO_EMAIL,
+        DEMO_PASSWORD: env.DEMO_PASSWORD,
+        DEMO_MODE: env.DEMO_MODE,
         SESSION_SECRET: env.SESSION_SECRET
       };
 
@@ -136,14 +129,13 @@ function apiDevServer(env: Record<string, string>): Plugin {
 
       mountRaw(server, '/api/submit', (request) => submitOnRequest({ request, env: dataEnv }));
       mountRaw(server, '/api/auth/login', (request) => authLoginOnRequest({ request, env: authEnv }));
-      mountRaw(server, '/api/auth/callback', (request) => authCallbackOnRequest({ request, env: authEnv }));
       mountRaw(server, '/api/auth/logout', (request) => authLogoutOnRequest({ request }));
     }
   };
 }
 
 export default defineConfig(({ mode }) => {
-  // Empty prefix so GAS_URL / GAS_TOKEN are readable here without a
+  // Empty prefix so server-only variables are readable here without a
   // VITE_ prefix — they must never reach the client. Resolved against
   // this file's directory, not cwd, so launching from a parent folder
   // still finds .env.local.

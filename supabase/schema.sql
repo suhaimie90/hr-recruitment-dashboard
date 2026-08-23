@@ -6,7 +6,7 @@
 --
 -- All access is meant to go through Cloudflare Pages Functions using
 -- the service_role key (same token-proxy shape as the current
--- functions/api/gas.ts) — never directly from the browser with the
+-- functions/api/data.ts — never directly from the browser with the
 -- anon key. RLS is enabled with no permissive policies as a
 -- defense-in-depth backstop, not the primary access control.
 --

@@ -34,6 +34,7 @@ export interface Env {
   SUPABASE_SERVICE_ROLE_KEY?: string;
   GAS_URL?: string;
   GAS_TOKEN?: string;
+  DEMO_MODE?: string;
 }
 
 const MAX_FILE_SIZE = 5 * 1024 * 1024; // 5MB — matches Config.gs
@@ -166,6 +167,10 @@ async function uploadResumeToDrive(
 }
 
 async function handleSubmit(request: Request, env: Env) {
+  if (/^(1|true|yes)$/i.test(String(env.DEMO_MODE || ''))) {
+    return fail('Public applications are disabled in this portfolio demo.');
+  }
+
   if (!env.SUPABASE_URL || !env.SUPABASE_SERVICE_ROLE_KEY || !env.GAS_URL || !env.GAS_TOKEN) {
     return fail('Server is not configured for Supabase and Google Drive uploads.');
   }
